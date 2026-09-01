@@ -29,10 +29,8 @@ const INITIAL_CLASSES: SchoolClass[] = [
 ];
 
 const INITIAL_SECTIONS: Section[] = [
-  { id: 's1', class_id: 'c7', name: 'Section A' },
-  { id: 's2', class_id: 'c7', name: 'Section B' },
-  { id: 's3', class_id: 'c8', name: 'Section A' },
-  { id: 's4', class_id: 'c12', name: 'Section A' },
+  { id: 's-a', class_id: 'all', name: 'Section A' },
+  { id: 's-b', class_id: 'all', name: 'Section B' },
 ];
 
 export function generateDefaultPassword(name: string, dob?: string): string {
@@ -104,7 +102,7 @@ class PortalStore {
         try {
           const parsed = JSON.parse(saved);
           this.classes = parsed.classes || INITIAL_CLASSES;
-          this.sections = parsed.sections || INITIAL_SECTIONS;
+          this.sections = INITIAL_SECTIONS;
           // Filter out parent role & old demo accounts
           this.profiles = (parsed.profiles || INITIAL_PROFILES).filter(
             (p: any) => p.role !== 'parent' && p.id !== 'u-teacher-1' && p.email !== 'teacher@rkvm.edu.in'
@@ -363,7 +361,9 @@ export async function deleteAttendanceRecord(id: string) {
 }
 
 export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>): Promise<Student> {
-  const generatedEmail = studentData.email || `${studentData.first_name.toLowerCase()}.${studentData.last_name.toLowerCase()}.st@rkvmschool.in`;
+  const generatedEmail = studentData.phone
+    ? `${studentData.phone.replace(/\D/g, '')}@rkvmschool.in`
+    : (studentData.email || `${studentData.first_name.toLowerCase().replace(/\s+/g, '')}.st@rkvmschool.in`);
   const generatedPassword = studentData.portal_password || generateDefaultPassword(studentData.first_name, studentData.date_of_birth);
 
   const newStudent: Student = {
@@ -383,7 +383,8 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   const studentProfile: Profile = {
     id: newStudent.id,
     email: generatedEmail,
-    full_name: `${studentData.first_name} ${studentData.last_name}`,
+    full_name: studentData.first_name,
+    phone: studentData.phone,
     role: 'parent',
     portal_password: generatedPassword,
   };
@@ -415,17 +416,63 @@ export async function updateStudent(id: string, updates: Partial<Student>): Prom
     store.students[idx].class_name = cls?.name;
     store.students[idx].section_name = sec?.name;
 
-    // Keep profile email / password synced
+    // Keep profile email / password / phone / avatar synced
     const pIdx = store.profiles.findIndex((p) => p.id === id || p.email.toLowerCase() === store.students[idx].email?.toLowerCase());
     if (pIdx >= 0) {
-      store.profiles[pIdx].full_name = `${store.students[idx].first_name} ${store.students[idx].last_name}`;
+      store.profiles[pIdx].full_name = store.students[idx].first_name;
+      if (updates.phone) store.profiles[pIdx].phone = updates.phone;
       if (updates.portal_password) store.profiles[pIdx].portal_password = updates.portal_password;
+      if (updates.avatar_url !== undefined) store.profiles[pIdx].avatar_url = updates.avatar_url;
+      if (updates.pending_avatar_url !== undefined) store.profiles[pIdx].pending_avatar_url = updates.pending_avatar_url;
+      if (updates.pending_avatar_status !== undefined) store.profiles[pIdx].pending_avatar_status = updates.pending_avatar_status;
     }
 
     store.save();
     return store.students[idx];
   }
   throw new Error('Student not found');
+}
+
+export async function requestStudentPhotoChange(studentId: string, photoUrl: string): Promise<Student> {
+  const updates: Partial<Student> = {
+    pending_avatar_url: photoUrl,
+    pending_avatar_status: 'pending',
+    pending_avatar_requested_at: new Date().toISOString(),
+  };
+  return updateStudent(studentId, updates);
+}
+
+export async function approveStudentPhotoChange(studentId: string): Promise<Student> {
+  const st = store.students.find((s) => s.id === studentId);
+  if (!st || !st.pending_avatar_url) throw new Error('No pending photo found for this student');
+
+  const updates: Partial<Student> = {
+    avatar_url: st.pending_avatar_url,
+    pending_avatar_url: undefined,
+    pending_avatar_status: 'approved',
+    pending_avatar_requested_at: undefined,
+  };
+  return updateStudent(studentId, updates);
+}
+
+export async function rejectStudentPhotoChange(studentId: string): Promise<Student> {
+  const updates: Partial<Student> = {
+    pending_avatar_url: undefined,
+    pending_avatar_status: 'rejected',
+    pending_avatar_requested_at: undefined,
+  };
+  return updateStudent(studentId, updates);
+}
+
+export async function deleteStudent(id: string): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    await supabase.from('students').delete().eq('id', id);
+  }
+  store.students = store.students.filter((s) => s.id !== id);
+  store.profiles = store.profiles.filter((p) => p.id !== id);
+  store.attendance = store.attendance.filter((a) => a.student_id !== id);
+  store.save();
+  return true;
 }
 
 export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>): Promise<Profile> {

@@ -14,13 +14,27 @@ function PortalLoginPage() {
   const navigate = useNavigate();
 
   // Form Fields
-  const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
+  const [identifier, setIdentifier] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('rkvm_remembered_identifier') || '';
+    }
+    return '';
+  });
+  const [password, setPassword] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('rkvm_remembered_password') || '';
+    }
+    return '';
+  });
+  const [rememberMe, setRememberMe] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('rkvm_remember_me') !== 'false';
+    }
+    return true;
+  });
 
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  // Note: Automatic redirect disabled to ensure login page is always 100% interactive for user input
 
   // Handle Login Submit
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -28,6 +42,16 @@ function PortalLoginPage() {
     if (!identifier || !password) {
       toast.error('Please enter both Mobile Number / Email and Password.');
       return;
+    }
+
+    if (rememberMe) {
+      localStorage.setItem('rkvm_remember_me', 'true');
+      localStorage.setItem('rkvm_remembered_identifier', identifier.trim());
+      localStorage.setItem('rkvm_remembered_password', password);
+    } else {
+      localStorage.setItem('rkvm_remember_me', 'false');
+      localStorage.removeItem('rkvm_remembered_identifier');
+      localStorage.removeItem('rkvm_remembered_password');
     }
 
     setLoading(true);
@@ -111,21 +135,9 @@ function PortalLoginPage() {
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-semibold text-foreground uppercase tracking-wider">
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIdentifier('rkvmschool.in@gmail.com');
-                    setPassword('Rkvm@12345');
-                  }}
-                  className="text-[11px] font-bold text-primary hover:underline"
-                >
-                  Fill Admin Credentials
-                </button>
-              </div>
+              <label className="block text-xs font-semibold text-foreground uppercase tracking-wider mb-1.5">
+                Password
+              </label>
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-muted-foreground">
                   <Lock className="size-4" />
@@ -149,6 +161,18 @@ function PortalLoginPage() {
                   {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                 </button>
               </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <label className="flex items-center gap-2 text-xs font-semibold text-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
+                  className="size-4 rounded border-input text-primary focus:ring-primary/20 accent-primary cursor-pointer"
+                />
+                Remember me
+              </label>
             </div>
 
             <button

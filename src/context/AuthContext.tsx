@@ -154,7 +154,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         (s) =>
           s.email?.toLowerCase() === cleanInput ||
           s.id.toLowerCase() === cleanInput ||
-          s.roll_number === cleanInput
+          s.roll_number === cleanInput ||
+          isPhoneMatch(s.phone)
       );
 
       // Designated Admin Check

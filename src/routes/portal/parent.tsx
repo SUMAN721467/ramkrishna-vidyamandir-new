@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import {
   GraduationCap,
@@ -14,10 +14,25 @@ import {
   ShieldCheck,
   Phone,
   Mail,
+  Camera,
+  Upload,
+  AlertCircle,
+  X,
+  Edit2,
+  Save,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PortalHeader } from '../../components/portal/PortalHeader';
-import { fetchParentChildren, fetchAttendance, fetchNotices } from '../../lib/portal-db';
+import {
+  fetchStudents,
+  fetchParentChildren,
+  fetchAttendance,
+  fetchNotices,
+  requestStudentPhotoChange,
+  rejectStudentPhotoChange,
+  updateStudent,
+} from '../../lib/portal-db';
+import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
 import type { Student, AttendanceRecord, Notice } from '../../types/portal';
 
@@ -30,9 +45,24 @@ function StudentDashboardPage() {
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Student profile state
   const [activeStudent, setActiveStudent] = useState<Student | null>(null);
+
+  // Edit Parent Details Modal
+  const [showEditParentModal, setShowEditParentModal] = useState(false);
+  const [parentForm, setParentForm] = useState({
+    father_name: '',
+    father_occupation: '',
+    mother_name: '',
+    mother_occupation: '',
+    phone: '',
+    alt_phone: '',
+    email: '',
+    address: '',
+  });
 
   // Student sub-tabs: 'profile' | 'academic' | 'attendance' | 'notices'
   const [subTab, setSubTab] = useState<'profile' | 'academic' | 'attendance' | 'notices'>('profile');
@@ -56,28 +86,43 @@ function StudentDashboardPage() {
       if (!user) return;
       setLoading(true);
       try {
-        const childList = await fetchParentChildren(user.id);
+        const allStudents = await fetchStudents();
+        const foundStudent = allStudents.find(
+          (s) =>
+            s.id === user.id ||
+            (user.email && s.email?.toLowerCase() === user.email.toLowerCase()) ||
+            (profile?.phone && s.phone === profile.phone) ||
+            (profile?.full_name && `${s.first_name} ${s.last_name}`.trim().toLowerCase() === profile.full_name.trim().toLowerCase())
+        );
 
         let studentObj: Student;
 
-        if (childList.length > 0) {
-          studentObj = childList[0];
+        if (foundStudent) {
+          studentObj = foundStudent;
         } else {
-          // Construct default student profile for logged in user
-          studentObj = {
-            id: user.id || 'st-logged-in',
-            roll_number: '01',
-            first_name: profile?.full_name?.split(' ')[0] || 'Student',
-            last_name: profile?.full_name?.split(' ').slice(1).join(' ') || 'User',
-            class_id: 'c5',
-            section_id: 's1',
-            class_name: 'Class 5',
-            section_name: 'Section A',
-            date_of_birth: '2014-05-12',
-            gender: 'Male',
-            status: 'active',
-            avatar_url: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
-          };
+          const childList = await fetchParentChildren(user.id);
+          if (childList.length > 0) {
+            studentObj = childList[0];
+          } else if (allStudents.length > 0) {
+            studentObj = allStudents[0];
+          } else {
+            studentObj = {
+              id: user.id || 'st-logged-in',
+              roll_number: '01',
+              first_name: profile?.full_name?.split(' ')[0] || 'Student',
+              last_name: profile?.full_name?.split(' ').slice(1).join(' ') || '',
+              class_id: 'c5',
+              section_id: 's1',
+              class_name: 'Class 5',
+              section_name: 'Section A',
+              date_of_birth: '2014-05-12',
+              gender: 'Male',
+              status: 'active',
+              avatar_url: profile?.avatar_url,
+              pending_avatar_url: profile?.pending_avatar_url,
+              pending_avatar_status: profile?.pending_avatar_status,
+            };
+          }
         }
 
         setActiveStudent(studentObj);
@@ -100,11 +145,78 @@ function StudentDashboardPage() {
     loadStudentData();
   }, [user, profile]);
 
+  // Handle Photo Upload Request
+  const handlePhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0] || !activeStudent) return;
+    const file = e.target.files[0];
+    setUploadingPhoto(true);
+    try {
+      const photoUrl = await uploadProfilePhoto(file, 'students');
+      await requestStudentPhotoChange(activeStudent.id, photoUrl);
+      toast.success('Photo uploaded and sent to School Admin for verification!');
+      setActiveStudent({
+        ...activeStudent,
+        pending_avatar_url: photoUrl,
+        pending_avatar_status: 'pending',
+        pending_avatar_requested_at: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to upload photo');
+    } finally {
+      setUploadingPhoto(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Handle Cancel Pending Request
+  const handleCancelPhotoRequest = async () => {
+    if (!activeStudent) return;
+    try {
+      await rejectStudentPhotoChange(activeStudent.id);
+      toast.success('Photo verification request removed.');
+      setActiveStudent({
+        ...activeStudent,
+        pending_avatar_url: undefined,
+        pending_avatar_status: undefined,
+      });
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to cancel photo request');
+    }
+  };
+
+  // Open Edit Parent Modal
+  const openEditParentModal = () => {
+    if (!activeStudent) return;
+    setParentForm({
+      father_name: activeStudent.father_name || '',
+      father_occupation: activeStudent.father_occupation || '',
+      mother_name: activeStudent.mother_name || '',
+      mother_occupation: activeStudent.mother_occupation || '',
+      phone: activeStudent.phone || '',
+      alt_phone: activeStudent.alt_phone || '',
+      email: activeStudent.email || '',
+      address: activeStudent.address || '',
+    });
+    setShowEditParentModal(true);
+  };
+
+  // Handle Save Parent & Contact Details
+  const handleSaveParentDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeStudent) return;
+    try {
+      const updated = await updateStudent(activeStudent.id, parentForm);
+      setActiveStudent(updated);
+      setShowEditParentModal(false);
+      toast.success('Parent & contact details updated successfully!');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update details');
+    }
+  };
+
   // Calculate attendance stats
   const totalDays = attendanceHistory.length;
   const presentDays = attendanceHistory.filter((a) => a.status === 'present').length;
-  const absentDays = attendanceHistory.filter((a) => a.status === 'absent').length;
-  const lateDays = attendanceHistory.filter((a) => a.status === 'late').length;
   const attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 92;
 
   if (authLoading || (loading && !activeStudent)) {
@@ -130,7 +242,7 @@ function StudentDashboardPage() {
     date_of_birth: '2014-05-12',
     gender: 'Male',
     status: 'active',
-    avatar_url: profile?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+    avatar_url: profile?.avatar_url,
   };
 
   return (
@@ -138,21 +250,46 @@ function StudentDashboardPage() {
       <PortalHeader title="Student Portal" />
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 space-y-8 animate-in fade-in duration-300">
+        {/* Hidden File Input for Student Photo Upload */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          className="hidden"
+          onChange={handlePhotoSelected}
+        />
+
         {/* ALWAYS-VISIBLE FIXED STUDENT PROFILE BANNER */}
         <div className="rounded-3xl border border-border bg-card p-6 sm:p-8 shadow-soft space-y-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="flex items-center gap-5">
-              {st.avatar_url ? (
-                <img
-                  src={st.avatar_url}
-                  alt={st.first_name}
-                  className="size-24 rounded-3xl object-cover border-2 border-primary shadow-soft shrink-0"
-                />
-              ) : (
-                <div className="grid size-24 place-items-center rounded-3xl bg-primary/10 text-primary font-extrabold text-3xl border-2 border-primary shrink-0">
-                  {st.first_name.charAt(0)}
-                </div>
-              )}
+              <div className="relative group shrink-0">
+                {st.avatar_url ? (
+                  <img
+                    src={st.avatar_url}
+                    alt={st.first_name}
+                    className="size-24 rounded-3xl object-cover border-2 border-primary shadow-soft"
+                  />
+                ) : (
+                  <div className="grid size-24 place-items-center rounded-3xl bg-primary/10 text-primary font-extrabold text-3xl border-2 border-primary">
+                    {st.first_name.charAt(0)}
+                  </div>
+                )}
+
+                {/* Upload / Change Photo Overlay Button */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                  className="absolute inset-0 grid place-items-center bg-black/60 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity text-white cursor-pointer"
+                  title="Change Profile Photo (Subject to Admin Approval)"
+                >
+                  <div className="flex flex-col items-center gap-1 text-[10px] font-bold">
+                    <Camera className="size-5" />
+                    <span>{uploadingPhoto ? 'Uploading...' : 'Change'}</span>
+                  </div>
+                </button>
+              </div>
 
               <div className="space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -169,9 +306,20 @@ function StudentDashboardPage() {
                   {st.class_name || 'Class 5'} — {st.section_name || 'Section A'} • Roll Number: <span className="font-mono text-foreground font-extrabold">#{st.roll_number}</span>
                 </p>
 
-                <p className="text-xs text-muted-foreground">
-                  Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • Date of Birth: <strong className="text-foreground">{st.date_of_birth || '2014-05-12'}</strong> • System ID: <span className="font-mono">{st.id}</span>
-                </p>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong></span>
+                  <span>•</span>
+                  <span>Date of Birth: <strong className="text-foreground">{st.date_of_birth || '2014-05-12'}</strong></span>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-primary font-bold hover:underline"
+                  >
+                    <Camera className="size-3.5" />
+                    Upload New Photo
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -189,6 +337,39 @@ function StudentDashboardPage() {
             </div>
           </div>
         </div>
+
+        {/* PENDING PHOTO APPROVAL NOTICE BANNER */}
+        {st.pending_avatar_url && st.pending_avatar_status === 'pending' && (
+          <div className="rounded-3xl border border-amber-300/80 bg-amber-50 dark:bg-amber-950/40 p-5 shadow-soft flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in">
+            <div className="flex items-center gap-4">
+              <img
+                src={st.pending_avatar_url}
+                alt="Pending verification photo"
+                className="size-14 rounded-2xl object-cover border-2 border-amber-500 shrink-0 shadow-xs"
+              />
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Clock className="size-4 text-amber-600" />
+                  <h4 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                    New Photo Submitted — Pending Admin Approval
+                  </h4>
+                </div>
+                <p className="text-xs text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                  Your new photo has been uploaded and submitted to the School Administrator for verification. Once approved, it will automatically update your public profile picture.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCancelPhotoRequest}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400 bg-amber-100 dark:bg-amber-900/60 px-3.5 py-2 text-xs font-bold text-amber-900 dark:text-amber-100 hover:bg-amber-200 transition-colors shrink-0"
+            >
+              <X className="size-3.5" />
+              Cancel Request
+            </button>
+          </div>
+        )}
 
         {/* SUB-TABS NAVIGATION BAR */}
         <div className="flex items-center gap-2 border-b border-border pb-3 overflow-x-auto">
@@ -220,37 +401,82 @@ function StudentDashboardPage() {
 
         {/* SUB-TAB 1: STUDENT & GUARDIAN PROFILE */}
         {subTab === 'profile' && (
-          <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4 animate-in fade-in duration-200">
-            <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-              <Users className="size-5 text-emerald-600" />
-              Student Profile & Guardian Details
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-border/60">
-              <div className="rounded-2xl bg-muted/30 p-4 space-y-1">
-                <span className="text-[10px] font-bold uppercase text-muted-foreground block">Guardian / Parent Name</span>
-                <p className="text-sm font-bold text-foreground">Shri Rajesh Kumar Das</p>
-                <span className="text-xs text-primary font-semibold block">Relationship: Father</span>
+          <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-6 animate-in fade-in duration-200">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <Users className="size-5 text-emerald-600" />
+                  Parent, Guardian & Contact Information
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Official contact records for school communication and emergency contacts.
+                </p>
               </div>
 
-              <div className="rounded-2xl bg-muted/30 p-4 space-y-1">
-                <span className="text-[10px] font-bold uppercase text-muted-foreground block">Emergency Contact</span>
+              <button
+                type="button"
+                onClick={openEditParentModal}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-colors shrink-0"
+              >
+                <Edit2 className="size-3.5" />
+                Edit / Update Details
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-border/60">
+              {/* Father Information */}
+              <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                  Father's Details
+                </span>
+                <p className="text-sm font-bold text-foreground">
+                  {st.father_name || 'Not provided'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Occupation: <strong className="text-foreground">{st.father_occupation || 'Not provided'}</strong>
+                </p>
+              </div>
+
+              {/* Mother Information */}
+              <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                  Mother's Details
+                </span>
+                <p className="text-sm font-bold text-foreground">
+                  {st.mother_name || 'Not provided'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Occupation: <strong className="text-foreground">{st.mother_occupation || 'Homemaker'}</strong>
+                </p>
+              </div>
+
+              {/* Contact Information */}
+              <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                  Contact Numbers
+                </span>
                 <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
                   <Phone className="size-3.5 text-emerald-600" />
-                  +91 94340 98765
+                  Primary: {st.phone || 'Not provided'}
                 </p>
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <Phone className="size-3.5 text-indigo-500" />
+                  Alternative: {st.alt_phone || 'None'}
+                </p>
+                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 truncate">
                   <Mail className="size-3.5 text-primary" />
-                  {profile?.email || 'parent@rkvm.edu.in'}
+                  {st.email || 'No email set'}
                 </p>
               </div>
 
-              <div className="rounded-2xl bg-muted/30 p-4 space-y-1">
-                <span className="text-[10px] font-bold uppercase text-muted-foreground block">Residential Address</span>
-                <p className="text-xs font-semibold text-foreground">
-                  Vill - Aurangabad, P.O - Keshiary, Dist - Paschim Medinipur
+              {/* Residential Address */}
+              <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                  Residential Address
+                </span>
+                <p className="text-xs font-semibold text-foreground leading-relaxed">
+                  {st.address || 'Keshiary, Paschim Medinipur, West Bengal - 721133'}
                 </p>
-                <span className="text-[11px] text-muted-foreground block">West Bengal 721133</span>
               </div>
             </div>
           </div>
@@ -423,6 +649,170 @@ function StudentDashboardPage() {
                   </p>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* EDIT PARENT & CONTACT DETAILS MODAL */}
+        {showEditParentModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+            <div className="w-full max-w-lg rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+                  <Users className="size-5 text-emerald-600" />
+                  Update Parent & Contact Details
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowEditParentModal(false)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveParentDetails} className="space-y-4">
+                {/* Father Details */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-wider">
+                    Father's Information
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Father's Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter Father's Name"
+                        value={parentForm.father_name}
+                        onChange={(e) => setParentForm({ ...parentForm, father_name: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Father's Occupation
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Farmer / Business / Teacher"
+                        value={parentForm.father_occupation}
+                        onChange={(e) => setParentForm({ ...parentForm, father_occupation: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mother Details */}
+                <div className="space-y-2 pt-2 border-t border-border/60">
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-wider">
+                    Mother's Information
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Mother's Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter Mother's Name"
+                        value={parentForm.mother_name}
+                        onChange={(e) => setParentForm({ ...parentForm, mother_name: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Mother's Occupation
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Homemaker / Service"
+                        value={parentForm.mother_occupation}
+                        onChange={(e) => setParentForm({ ...parentForm, mother_occupation: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Contact Numbers & Email */}
+                <div className="space-y-2 pt-2 border-t border-border/60">
+                  <h4 className="text-xs font-bold text-primary uppercase tracking-wider">
+                    Contact & Communication
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Primary Mobile (Login ID)
+                      </label>
+                      <input
+                        type="tel"
+                        placeholder="Primary Mobile Number"
+                        value={parentForm.phone}
+                        onChange={(e) => setParentForm({ ...parentForm, phone: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Alternative Mobile (Optional)
+                      </label>
+                      <input
+                        type="tel"
+                        placeholder="Secondary / Guardian Mobile"
+                        value={parentForm.alt_phone}
+                        onChange={(e) => setParentForm({ ...parentForm, alt_phone: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Email Address (Optional)
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="e.g. parent@gmail.com"
+                      value={parentForm.email}
+                      onChange={(e) => setParentForm({ ...parentForm, email: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Residential Address
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder="Village / Post / District / PIN"
+                      value={parentForm.address}
+                      onChange={(e) => setParentForm({ ...parentForm, address: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditParentModal(false)}
+                    className="rounded-xl border border-input px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-colors"
+                  >
+                    Save Details
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         )}

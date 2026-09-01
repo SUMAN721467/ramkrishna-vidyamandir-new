@@ -11,6 +11,9 @@ export interface Profile {
   role: UserRole;
   phone?: string;
   avatar_url?: string;
+  pending_avatar_url?: string;
+  pending_avatar_status?: 'pending' | 'approved' | 'rejected';
+  pending_avatar_requested_at?: string;
   portal_password?: string;
   created_at?: string;
   updated_at?: string;
@@ -39,8 +42,18 @@ export interface Student {
   class_id: string;
   section_id: string;
   avatar_url?: string;
+  pending_avatar_url?: string;
+  pending_avatar_status?: 'pending' | 'approved' | 'rejected';
+  pending_avatar_requested_at?: string;
   status: StudentStatus;
+  phone?: string;
+  alt_phone?: string;
   email?: string;
+  father_name?: string;
+  father_occupation?: string;
+  mother_name?: string;
+  mother_occupation?: string;
+  address?: string;
   portal_password?: string;
   created_at?: string;
   updated_at?: string;

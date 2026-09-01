@@ -48,10 +48,13 @@ import {
   addProfile,
   linkParentToStudent,
   assignTeacherToClass,
+  deleteStudent,
   deleteAttendanceRecord,
   exportAttendanceToExcel,
   addNotice,
   deleteNotice,
+  approveStudentPhotoChange,
+  rejectStudentPhotoChange,
   store,
   generateDefaultPassword,
   updateUserPassword,
@@ -91,6 +94,10 @@ function AdminDashboardPage() {
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
 
+  // Class-wise filter in Student Directory
+  const [filterClassId, setFilterClassId] = useState<string>('all');
+  const [deleteStudentId, setDeleteStudentId] = useState<string | null>(null);
+
   // Viewing Individual Student Details Dashboard state
   const [viewingStudentDetails, setViewingStudentDetails] = useState<Student | null>(null);
   const [studentSubTab, setStudentSubTab] = useState<'profile' | 'academic' | 'attendance'>('profile');
@@ -118,6 +125,7 @@ function AdminDashboardPage() {
     roll_number: '',
     first_name: '',
     last_name: '',
+    phone: '',
     date_of_birth: '',
     gender: 'Male',
     class_id: '',
@@ -269,6 +277,49 @@ function AdminDashboardPage() {
       loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save student');
+    }
+  };
+
+  // Handle Delete Student Confirmation
+  const confirmDeleteStudent = async () => {
+    if (!deleteStudentId) return;
+    try {
+      await deleteStudent(deleteStudentId);
+      toast.success('Student record removed successfully!');
+      setDeleteStudentId(null);
+      if (viewingStudentDetails?.id === deleteStudentId) {
+        setViewingStudentDetails(null);
+      }
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to remove student');
+    }
+  };
+
+  // Handle Photo Approval Actions
+  const handleApprovePhoto = async (studentId: string) => {
+    try {
+      const updated = await approveStudentPhotoChange(studentId);
+      toast.success('Student profile photo approved successfully!');
+      if (viewingStudentDetails?.id === studentId) {
+        setViewingStudentDetails(updated);
+      }
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to approve photo');
+    }
+  };
+
+  const handleRejectPhoto = async (studentId: string) => {
+    try {
+      const updated = await rejectStudentPhotoChange(studentId);
+      toast.success('Photo request rejected and permanently deleted from database.');
+      if (viewingStudentDetails?.id === studentId) {
+        setViewingStudentDetails(updated);
+      }
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reject photo');
     }
   };
 
@@ -482,6 +533,104 @@ function AdminDashboardPage() {
               </div>
             </div>
 
+            {/* PENDING PHOTO VERIFICATION QUEUE (Shown when students submit new photos) */}
+            {(() => {
+              const pendingPhotos = students.filter(
+                (s) => s.pending_avatar_url && s.pending_avatar_status === 'pending'
+              );
+              if (pendingPhotos.length === 0) return null;
+              return (
+                <div className="rounded-3xl border border-amber-300/80 bg-amber-50/50 dark:bg-amber-950/20 p-6 shadow-soft space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Clock className="size-5 text-amber-600" />
+                      <h3 className="text-base font-bold text-foreground">
+                        Student Photo Approval Requests ({pendingPhotos.length})
+                      </h3>
+                    </div>
+                    <span className="text-[11px] font-bold text-amber-900 dark:text-amber-200 bg-amber-200/60 dark:bg-amber-900/60 px-2.5 py-1 rounded-full">
+                      Action Required
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    The following students have uploaded new photos from their portal. Review each photo to approve it for their official profile or reject and delete it.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+                    {pendingPhotos.map((st) => (
+                      <div
+                        key={st.id}
+                        className="rounded-2xl border border-border bg-card p-4 shadow-soft space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-bold text-foreground">
+                              {st.first_name} {st.last_name}
+                            </p>
+                            <p className="text-xs text-primary font-semibold">
+                              {st.class_name || 'Class 5'} • Roll #{st.roll_number}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded-md">
+                            {st.id}
+                          </span>
+                        </div>
+
+                        {/* Photo Comparison: Current vs New */}
+                        <div className="flex items-center justify-around bg-muted/40 p-3 rounded-xl border border-border/50">
+                          <div className="text-center space-y-1">
+                            <span className="text-[10px] font-bold text-muted-foreground uppercase block">Current</span>
+                            {st.avatar_url ? (
+                              <img
+                                src={st.avatar_url}
+                                alt="Current"
+                                className="size-14 rounded-xl object-cover border border-border mx-auto opacity-70"
+                              />
+                            ) : (
+                              <div className="size-14 rounded-xl bg-muted grid place-items-center text-xs font-bold text-muted-foreground mx-auto">
+                                None
+                              </div>
+                            )}
+                          </div>
+
+                          <span className="text-base font-bold text-muted-foreground">→</span>
+
+                          <div className="text-center space-y-1">
+                            <span className="text-[10px] font-bold text-emerald-600 uppercase block">New Upload</span>
+                            <img
+                              src={st.pending_avatar_url}
+                              alt="New Uploaded"
+                              className="size-14 rounded-xl object-cover border-2 border-emerald-500 mx-auto shadow-sm"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Approval Actions */}
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleApprovePhoto(st.id)}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-soft hover:bg-emerald-700 transition-colors"
+                          >
+                            <CheckCircle2 className="size-3.5" />
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectPhoto(st.id)}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs font-bold text-destructive hover:bg-destructive hover:text-white transition-colors"
+                          >
+                            <Trash2 className="size-3.5" />
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Quick Action Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
@@ -580,12 +729,21 @@ function AdminDashboardPage() {
                       <div className="flex items-center gap-3">
                         <button
                           type="button"
+                          onClick={() => setDeleteStudentId(st.id)}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-2.5 text-xs font-bold text-destructive hover:bg-destructive hover:text-white transition-colors shadow-soft"
+                        >
+                          <Trash2 className="size-4" />
+                          Delete Student
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => {
                             setEditingStudent(st);
                             setStudentForm({
                               roll_number: st.roll_number,
                               first_name: st.first_name,
                               last_name: st.last_name,
+                              phone: st.phone || '',
                               date_of_birth: st.date_of_birth || '',
                               gender: st.gender || 'Male',
                               class_id: st.class_id,
@@ -601,6 +759,62 @@ function AdminDashboardPage() {
                         </button>
                       </div>
                     </div>
+
+                    {/* PENDING PHOTO APPROVAL BANNER IN STUDENT DETAILS */}
+                    {st.pending_avatar_url && st.pending_avatar_status === 'pending' && (
+                      <div className="rounded-3xl border border-amber-300/80 bg-amber-50 dark:bg-amber-950/40 p-6 shadow-soft space-y-4 animate-in fade-in">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Clock className="size-5 text-amber-600" />
+                            <h4 className="text-base font-bold text-amber-900 dark:text-amber-200">
+                              Student Uploaded a New Photo — Action Required
+                            </h4>
+                          </div>
+                          <span className="text-xs font-bold text-amber-900 dark:text-amber-100 bg-amber-200/80 dark:bg-amber-900/80 px-2.5 py-1 rounded-full">
+                            Pending Verification
+                          </span>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pt-2">
+                          <div className="flex items-center gap-6">
+                            <div className="text-center space-y-1">
+                              <span className="text-[10px] font-bold text-muted-foreground uppercase block">Current Photo</span>
+                              {st.avatar_url ? (
+                                <img src={st.avatar_url} alt="Current" className="size-20 rounded-2xl object-cover border border-border" />
+                              ) : (
+                                <div className="size-20 rounded-2xl bg-muted grid place-items-center text-xs font-bold text-muted-foreground">None</div>
+                              )}
+                            </div>
+
+                            <span className="text-xl font-bold text-muted-foreground">→</span>
+
+                            <div className="text-center space-y-1">
+                              <span className="text-[10px] font-bold text-emerald-600 uppercase block">New Uploaded Photo</span>
+                              <img src={st.pending_avatar_url} alt="New upload" className="size-20 rounded-2xl object-cover border-2 border-emerald-500 shadow-md" />
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleApprovePhoto(st.id)}
+                              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-soft hover:bg-emerald-700 transition-colors"
+                            >
+                              <CheckCircle2 className="size-4" />
+                              Approve & Update Profile
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRejectPhoto(st.id)}
+                              className="inline-flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-xs font-bold text-destructive hover:bg-destructive hover:text-white transition-colors"
+                            >
+                              <Trash2 className="size-4" />
+                              Reject & Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* FIXED ALWAYS-VISIBLE STUDENT PROFILE BANNER */}
                     <div className="rounded-3xl border border-border bg-card p-6 sm:p-8 shadow-soft space-y-6">
@@ -640,7 +854,7 @@ function AdminDashboardPage() {
                             </p>
 
                             <p className="text-xs text-muted-foreground">
-                              Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • Date of Birth: <strong className="text-foreground">{st.date_of_birth || '2014-05-12'}</strong> • System ID: <span className="font-mono">{st.id}</span>
+                              Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong> • Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • System ID: <span className="font-mono">{st.id}</span>
                             </p>
                           </div>
                         </div>
@@ -707,10 +921,10 @@ function AdminDashboardPage() {
                               type="button"
                               onClick={() => {
                                 const pass = st.portal_password || generateDefaultPassword(st.first_name, st.date_of_birth);
-                                const email = st.email || `${st.first_name.toLowerCase()}.${st.last_name.toLowerCase()}.st@rkvmschool.in`;
+                                const email = st.phone || st.email || `${st.first_name.toLowerCase()}.st@rkvmschool.in`;
                                 setPassModal({
                                   targetId: st.id,
-                                  targetName: `${st.first_name} ${st.last_name}`,
+                                  targetName: st.first_name,
                                   targetEmail: email,
                                   currentPass: pass,
                                 });
@@ -725,9 +939,9 @@ function AdminDashboardPage() {
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-primary/10">
                             <div className="rounded-2xl bg-card p-4 border border-border space-y-1">
-                              <span className="text-[10px] font-bold text-muted-foreground uppercase block">Login Email / User ID</span>
+                              <span className="text-[10px] font-bold text-muted-foreground uppercase block">Login Mobile Number</span>
                               <p className="text-sm font-mono font-bold text-foreground">
-                                {st.email || `${st.first_name.toLowerCase()}.${st.last_name.toLowerCase()}.st@rkvmschool.in`}
+                                {st.phone || st.email || 'Not provided'}
                               </p>
                             </div>
 
@@ -743,34 +957,63 @@ function AdminDashboardPage() {
                         <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
                           <h3 className="text-base font-bold text-foreground flex items-center gap-2">
                             <Users className="size-5 text-emerald-600" />
-                            Parent & Guardian Contact Information
+                            Parent, Guardian & Contact Information
                           </h3>
 
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-border/60">
-                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1">
-                              <span className="text-[10px] font-bold uppercase text-muted-foreground block">Guardian Name</span>
-                              <p className="text-sm font-bold text-foreground">Shri Rajesh Kumar Das</p>
-                              <span className="text-xs text-primary font-semibold block">Relationship: Father</span>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-border/60">
+                            {/* Father Information */}
+                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                              <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                                Father's Details
+                              </span>
+                              <p className="text-sm font-bold text-foreground">
+                                {st.father_name || 'Not provided'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Occupation: <strong className="text-foreground">{st.father_occupation || 'Not provided'}</strong>
+                              </p>
                             </div>
 
-                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1">
-                              <span className="text-[10px] font-bold uppercase text-muted-foreground block">Contact Details</span>
+                            {/* Mother Information */}
+                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                              <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                                Mother's Details
+                              </span>
+                              <p className="text-sm font-bold text-foreground">
+                                {st.mother_name || 'Not provided'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Occupation: <strong className="text-foreground">{st.mother_occupation || 'Homemaker'}</strong>
+                              </p>
+                            </div>
+
+                            {/* Contact Numbers */}
+                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                              <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                                Contact Numbers
+                              </span>
                               <p className="text-xs font-bold text-foreground flex items-center gap-1.5">
                                 <Phone className="size-3.5 text-emerald-600" />
-                                +91 94340 98765
+                                Primary: {st.phone || 'Not provided'}
                               </p>
-                              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                                <Phone className="size-3.5 text-indigo-500" />
+                                Alternative: {st.alt_phone || 'None'}
+                              </p>
+                              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 truncate">
                                 <Mail className="size-3.5 text-primary" />
-                                parent@rkvm.edu.in
+                                {st.email || 'No email set'}
                               </p>
                             </div>
 
-                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1">
-                              <span className="text-[10px] font-bold uppercase text-muted-foreground block">Residential Address</span>
-                              <p className="text-xs font-semibold text-foreground">
-                                Vill - Aurangabad, P.O - Keshiary, Dist - Paschim Medinipur
+                            {/* Residential Address */}
+                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                              <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                                Residential Address
+                              </span>
+                              <p className="text-xs font-semibold text-foreground leading-relaxed">
+                                {st.address || 'Keshiary, Paschim Medinipur, West Bengal - 721133'}
                               </p>
-                              <span className="text-[11px] text-muted-foreground block">West Bengal 721133</span>
                             </div>
                           </div>
                         </div>
@@ -779,47 +1022,47 @@ function AdminDashboardPage() {
 
                     {/* SUB-TAB CONTENT 2: ACADEMIC MARKS & GRADES */}
                     {studentSubTab === 'academic' && (
-                      <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4 animate-in fade-in duration-200">
+                      <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-6 animate-in fade-in duration-200">
                         <div className="flex items-center justify-between">
                           <h3 className="text-base font-bold text-foreground flex items-center gap-2">
                             <BookOpen className="size-5 text-primary" />
-                            Academic Performance & Subject Marks Summary
+                            Unit Assessment Performance (Term 1)
                           </h3>
-                          <span className="text-xs font-bold text-primary bg-primary/10 px-3 py-1 rounded-full">
-                            First Term Assessment 2026
+                          <span className="text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1 rounded-full">
+                            Overall Status: Passed
                           </span>
                         </div>
 
-                        <div className="overflow-x-auto border border-border rounded-2xl">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-muted/50 text-[11px] uppercase text-muted-foreground font-semibold border-b border-border">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground font-semibold border-b border-border">
                               <tr>
-                                <th className="px-4 py-3">Subject Name</th>
-                                <th className="px-4 py-3">Full Marks</th>
+                                <th className="px-4 py-3">Subject</th>
                                 <th className="px-4 py-3">Marks Obtained</th>
+                                <th className="px-4 py-3">Max Marks</th>
                                 <th className="px-4 py-3">Grade</th>
-                                <th className="px-4 py-3">Teacher Remarks</th>
+                                <th className="px-4 py-3">Remarks</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-border">
+                            <tbody className="divide-y divide-border text-xs">
                               {[
-                                { subject: 'Bengali (1st Language)', total: 100, marks: 92, grade: 'A+', remark: 'Outstanding literary skills & comprehension' },
-                                { subject: 'English (2nd Language)', total: 100, marks: 88, grade: 'A', remark: 'Good vocabulary and grammar proficiency' },
-                                { subject: 'Mathematics', total: 100, marks: 96, grade: 'A+', remark: 'Exceptional analytical & calculation speed' },
-                                { subject: 'Science & Environment', total: 100, marks: 91, grade: 'A+', remark: 'Keen experimental understanding' },
-                                { subject: 'History & Geography', total: 100, marks: 89, grade: 'A', remark: 'Strong map pointing and historical facts' },
-                                { subject: 'Computer & Physical Ed.', total: 100, marks: 95, grade: 'A+', remark: 'Active participation and practical skills' },
-                              ].map((row, idx) => (
-                                <tr key={idx} className="hover:bg-muted/30 transition-colors">
-                                  <td className="px-4 py-3 font-bold text-foreground">{row.subject}</td>
-                                  <td className="px-4 py-3 font-mono text-muted-foreground">{row.total}</td>
-                                  <td className="px-4 py-3 font-mono font-bold text-primary">{row.marks}</td>
+                                { sub: 'Bengali (First Language)', got: 94, max: 100, grade: 'AA', rem: 'Outstanding' },
+                                { sub: 'English (Second Language)', got: 88, max: 100, grade: 'A+', rem: 'Excellent' },
+                                { sub: 'Mathematics', got: 95, max: 100, grade: 'AA', rem: 'Outstanding' },
+                                { sub: 'General Science', got: 90, max: 100, grade: 'A+', rem: 'Very Good' },
+                                { sub: 'Social Science / History', got: 89, max: 100, grade: 'A+', rem: 'Very Good' },
+                                { sub: 'Geography', got: 92, max: 100, grade: 'AA', rem: 'Outstanding' },
+                              ].map((item, idx) => (
+                                <tr key={idx} className="hover:bg-muted/20">
+                                  <td className="px-4 py-3 font-bold text-foreground">{item.sub}</td>
+                                  <td className="px-4 py-3 font-mono font-bold text-primary">{item.got}</td>
+                                  <td className="px-4 py-3 font-mono text-muted-foreground">{item.max}</td>
                                   <td className="px-4 py-3">
-                                    <span className="inline-flex items-center rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 font-bold">
-                                      {row.grade}
+                                    <span className="rounded-md bg-primary/10 px-2 py-0.5 font-bold text-primary">
+                                      {item.grade}
                                     </span>
                                   </td>
-                                  <td className="px-4 py-3 text-muted-foreground">{row.remark}</td>
+                                  <td className="px-4 py-3 text-muted-foreground">{item.rem}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -864,21 +1107,21 @@ function AdminDashboardPage() {
                           </div>
                         </div>
 
-                        {/* Attendance History Log Table */}
-                        <div className="border border-border rounded-2xl overflow-hidden">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-muted/50 text-[11px] uppercase text-muted-foreground font-semibold border-b border-border">
+                        {/* Attendance Log Table */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm">
+                            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground font-semibold border-b border-border">
                               <tr>
                                 <th className="px-4 py-3">Date</th>
                                 <th className="px-4 py-3">Status</th>
                                 <th className="px-4 py-3">Marked By</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-border">
+                            <tbody className="divide-y divide-border text-xs">
                               {studentAtt.length === 0 ? (
                                 <tr>
-                                  <td colSpan={3} className="px-4 py-6 text-center text-muted-foreground">
-                                    No attendance history logged yet for this student.
+                                  <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
+                                    No attendance records logged yet for this student.
                                   </td>
                                 </tr>
                               ) : (
@@ -920,27 +1163,51 @@ function AdminDashboardPage() {
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingStudent(null);
-                      setStudentForm({
-                        roll_number: String(students.length + 1).padStart(2, '0'),
-                        first_name: '',
-                        last_name: '',
-                        date_of_birth: '2015-01-01',
-                        gender: 'Male',
-                        class_id: classes[0]?.id || '',
-                        section_id: sections[0]?.id || '',
-                        status: 'active',
-                      });
-                      setShowStudentModal(true);
-                    }}
-                    className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-colors"
-                  >
-                    <Plus className="size-4" />
-                    Add Student
-                  </button>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Class-wise Filter Dropdown */}
+                    <div className="flex items-center gap-2 rounded-xl border border-input bg-card px-3 py-2 text-xs font-semibold shadow-xs">
+                      <Filter className="size-3.5 text-muted-foreground" />
+                      <span className="text-muted-foreground">Class:</span>
+                      <select
+                        value={filterClassId}
+                        onChange={(e) => setFilterClassId(e.target.value)}
+                        className="bg-transparent font-bold text-foreground focus:outline-none cursor-pointer"
+                      >
+                        <option value="all">All Classes ({students.length})</option>
+                        {classes.map((c) => {
+                          const count = students.filter((s) => s.class_id === c.id).length;
+                          return (
+                            <option key={c.id} value={c.id}>
+                              {c.name} ({count})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingStudent(null);
+                        setStudentForm({
+                          roll_number: String(students.length + 1).padStart(2, '0'),
+                          first_name: '',
+                          last_name: '',
+                          phone: '',
+                          date_of_birth: '2015-01-01',
+                          gender: 'Male',
+                          class_id: filterClassId !== 'all' ? filterClassId : (classes[0]?.id || ''),
+                          section_id: sections[0]?.id || '',
+                          status: 'active',
+                        });
+                        setShowStudentModal(true);
+                      }}
+                      className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-colors"
+                    >
+                      <Plus className="size-4" />
+                      Add Student
+                    </button>
+                  </div>
                 </div>
 
                 <div className="rounded-3xl border border-border bg-card shadow-soft overflow-hidden">
@@ -957,14 +1224,20 @@ function AdminDashboardPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {students.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="px-6 py-8 text-center text-xs text-muted-foreground font-medium">
-                              No students registered yet. Click <strong className="text-primary font-bold">"Add Student"</strong> above to create your first student account.
-                            </td>
-                          </tr>
-                        ) : (
-                          students.map((st) => (
+                        {(() => {
+                          const filtered = students.filter((s) => filterClassId === 'all' || s.class_id === filterClassId);
+                          if (filtered.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={6} className="px-6 py-8 text-center text-xs text-muted-foreground font-medium">
+                                  {students.length === 0
+                                    ? 'No students registered yet. Click "Add Student" above to create your first student account.'
+                                    : 'No students found in the selected class.'}
+                                </td>
+                              </tr>
+                            );
+                          }
+                          return filtered.map((st) => (
                             <tr key={st.id} className="hover:bg-muted/30 transition-colors">
                               <td className="px-6 py-4 flex items-center gap-3">
                                 {st.avatar_url ? (
@@ -982,7 +1255,7 @@ function AdminDashboardPage() {
                                   <p className="font-bold text-foreground">
                                     {st.first_name} {st.last_name}
                                   </p>
-                                  <p className="text-[11px] text-muted-foreground">ID: {st.id}</p>
+                                  <p className="text-[11px] text-muted-foreground">Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong></p>
                                 </div>
                               </td>
                               <td className="px-6 py-4 font-mono font-bold text-primary">#{st.roll_number}</td>
@@ -1003,18 +1276,28 @@ function AdminDashboardPage() {
                                 </span>
                               </td>
                               <td className="px-6 py-4 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => setViewingStudentDetails(st)}
-                                  className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 px-3.5 py-1.5 text-xs font-bold text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
-                                >
-                                  <Eye className="size-3.5" />
-                                  View Details
-                                </button>
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingStudentDetails(st)}
+                                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+                                  >
+                                    <Eye className="size-3.5" />
+                                    View Details
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeleteStudentId(st.id)}
+                                    className="inline-flex items-center gap-1 rounded-xl border border-destructive/20 bg-destructive/10 px-2.5 py-1.5 text-xs font-bold text-destructive hover:bg-destructive hover:text-white transition-colors"
+                                  >
+                                    <Trash2 className="size-3.5" />
+                                    Delete
+                                  </button>
+                                </div>
                               </td>
                             </tr>
-                          ))
-                        )}
+                          ));
+                        })()}
                       </tbody>
                     </table>
                   </div>
@@ -1344,6 +1627,18 @@ function AdminDashboardPage() {
         onCancel={() => setDeleteAttId(null)}
       />
 
+      {/* CONFIRM DELETE STUDENT MODAL */}
+      <ConfirmDialog
+        isOpen={Boolean(deleteStudentId)}
+        title="Confirm Student Record Removal"
+        description="WARNING: You are about to remove this student record from the school portal directory. This will also remove the student login profile and attendance records. Are you sure you want to proceed?"
+        confirmLabel="Yes, Remove Student"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteStudent}
+        onCancel={() => setDeleteStudentId(null)}
+      />
+
       {/* STUDENT FORM MODAL */}
       {showStudentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
@@ -1353,32 +1648,45 @@ function AdminDashboardPage() {
             </h3>
 
             <form onSubmit={handleSaveStudent} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    First Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={studentForm.first_name}
-                    onChange={(e) => setStudentForm({ ...studentForm, first_name: e.target.value })}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Student Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter Student Name"
+                  value={studentForm.first_name}
+                  onChange={(e) => setStudentForm({ ...studentForm, first_name: e.target.value, last_name: '' })}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Last Name
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={studentForm.last_name}
-                    onChange={(e) => setStudentForm({ ...studentForm, last_name: e.target.value })}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Mobile Number (Used for Login & SMS)
+                </label>
+                <input
+                  type="tel"
+                  required
+                  placeholder="Enter 10-digit Mobile Number"
+                  value={studentForm.phone}
+                  onChange={(e) => setStudentForm({ ...studentForm, phone: e.target.value })}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Date of Birth (DOB)
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={studentForm.date_of_birth}
+                  onChange={(e) => setStudentForm({ ...studentForm, date_of_birth: e.target.value })}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1445,22 +1753,6 @@ function AdminDashboardPage() {
                     ))}
                   </select>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                  Upload Profile Photo (Supabase Storage)
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files[0]) {
-                      setStudentPhotoFile(e.target.files[0]);
-                    }
-                  }}
-                  className="w-full rounded-xl border border-input bg-background px-3 py-1.5 text-xs text-foreground"
-                />
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-2">
