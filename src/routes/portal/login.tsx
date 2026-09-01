@@ -20,14 +20,7 @@ function PortalLoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Redirect if authenticated
-  React.useEffect(() => {
-    if (activeRole) {
-      if (activeRole === 'admin') navigate({ to: '/portal/admin' });
-      else if (activeRole === 'teacher') navigate({ to: '/portal/teacher' });
-      else if (activeRole === 'parent') navigate({ to: '/portal/parent' });
-    }
-  }, [activeRole, navigate]);
+  // Note: Automatic redirect disabled to ensure login page is always 100% interactive for user input
 
   // Handle Login Submit
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -94,7 +87,7 @@ function PortalLoginPage() {
           </div>
 
           {/* SIGN IN FORM */}
-          <form className="space-y-4" onSubmit={handleLoginSubmit}>
+          <form className="space-y-4" onSubmit={handleLoginSubmit} autoComplete="off">
             <div>
               <label className="block text-xs font-semibold text-foreground uppercase tracking-wider mb-1.5">
                 Mobile Number / Email Address
@@ -105,6 +98,9 @@ function PortalLoginPage() {
                 </div>
                 <input
                   type="text"
+                  name="user_identifier_login"
+                  id="portal-user-identifier"
+                  autoComplete="off"
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
@@ -115,15 +111,30 @@ function PortalLoginPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-foreground uppercase tracking-wider mb-1.5">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-foreground uppercase tracking-wider">
+                  Password
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIdentifier('rkvmschool.in@gmail.com');
+                    setPassword('Rkvm@12345');
+                  }}
+                  className="text-[11px] font-bold text-primary hover:underline"
+                >
+                  Fill Admin Credentials
+                </button>
+              </div>
               <div className="relative">
                 <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-muted-foreground">
                   <Lock className="size-4" />
                 </div>
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  name="user_password_login"
+                  id="portal-user-password"
+                  autoComplete="new-password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

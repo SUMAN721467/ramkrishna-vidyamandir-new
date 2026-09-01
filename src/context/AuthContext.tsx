@@ -279,12 +279,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     setLoading(true);
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut();
+    try {
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+    } catch (e) {
+      console.error(e);
     }
     setUser(null);
     setProfile(null);
     localStorage.removeItem('rkvm_demo_user');
+    if (typeof window !== 'undefined') {
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith('sb-') || key.includes('supabase')) {
+          localStorage.removeItem(key);
+        }
+      });
+    }
     setLoading(false);
   };
 
