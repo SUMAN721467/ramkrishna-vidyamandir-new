@@ -439,13 +439,21 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   else store.profiles.push(studentProfile);
 
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
+    // Strip non-table properties before inserting
+    const dbPayload = { ...newStudent };
+    delete dbPayload.class_name;
+    delete dbPayload.section_name;
+    
+    const { data, error } = await supabase.from('students').insert([dbPayload]).select().single();
     if (error || !data) {
       throw new Error(error?.message || 'Database connection error: Failed to enroll student.');
     }
-    store.students.push(data);
+    
+    // Merge the joined properties back for the UI
+    const completeStudent = { ...data, class_name: cls?.name, section_name: sec?.name };
+    store.students.push(completeStudent);
     store.save();
-    return data;
+    return completeStudent;
   }
 
   store.students.push(newStudent);
@@ -455,7 +463,11 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
 
 export async function updateStudent(id: string, updates: Partial<Student>): Promise<Student> {
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase.from('students').update(updates).eq('id', id).select().single();
+    const dbPayload = { ...updates };
+    delete dbPayload.class_name;
+    delete dbPayload.section_name;
+    
+    const { data, error } = await supabase.from('students').update(dbPayload).eq('id', id).select().single();
     if (!error && data) return data;
   }
 
