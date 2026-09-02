@@ -1,15 +1,4 @@
-const supabasePkgName = '@supabase/supabase-js';
-let createClientFn: any = null;
-
-try {
-  // @ts-ignore
-  const supabaseModule = await import(/* @vite-ignore */ supabasePkgName).catch(() => null);
-  if (supabaseModule?.createClient) {
-    createClientFn = supabaseModule.createClient;
-  }
-} catch {
-  // Module loading fallback
-}
+import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -24,14 +13,18 @@ const supabaseAnonKey =
   '';
 
 export const isSupabaseConfigured = Boolean(
-  createClientFn &&
-    supabaseUrl &&
+  supabaseUrl &&
     supabaseAnonKey &&
     !supabaseUrl.includes('your-supabase-project')
 );
 
 export const supabase = isSupabaseConfigured
-  ? createClientFn(supabaseUrl, supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    })
   : ({
       auth: {
         getSession: async () => ({ data: { session: null } }),
