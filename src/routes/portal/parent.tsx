@@ -165,7 +165,6 @@ function StudentDashboardPage() {
         ...activeStudent,
         pending_avatar_url: photoUrl,
         pending_avatar_status: 'pending',
-        pending_avatar_requested_at: new Date().toISOString(),
       });
     } catch (err: any) {
       toast.error(err.message || 'Failed to upload photo');

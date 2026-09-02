@@ -441,6 +441,66 @@ export async function deleteAttendanceRecord(id: string) {
   return true;
 }
 
+const VALID_STUDENT_COLUMNS = new Set([
+  'id',
+  'roll_number',
+  'first_name',
+  'last_name',
+  'phone',
+  'alt_phone',
+  'email',
+  'date_of_birth',
+  'gender',
+  'class_id',
+  'section_id',
+  'father_name',
+  'father_occupation',
+  'mother_name',
+  'mother_occupation',
+  'address',
+  'portal_password',
+  'avatar_url',
+  'pending_avatar_url',
+  'pending_avatar_status',
+  'status',
+  'created_at',
+  'updated_at',
+]);
+
+function sanitizeStudentPayload(obj: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (VALID_STUDENT_COLUMNS.has(key) && value !== undefined) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+const VALID_PROFILE_COLUMNS = new Set([
+  'id',
+  'email',
+  'full_name',
+  'role',
+  'phone',
+  'avatar_url',
+  'pending_avatar_url',
+  'pending_avatar_status',
+  'portal_password',
+  'created_at',
+  'updated_at',
+]);
+
+function sanitizeProfilePayload(obj: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (VALID_PROFILE_COLUMNS.has(key) && value !== undefined) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
 export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>): Promise<Student> {
   const generatedEmail = studentData.phone
     ? `${studentData.phone.replace(/\D/g, '')}@rkvmschool.in`
@@ -475,10 +535,7 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   };
 
   if (isSupabaseConfigured) {
-    // Strip non-table properties before inserting
-    const dbPayload: any = { ...newStudent };
-    delete dbPayload.class_name;
-    delete dbPayload.section_name;
+    const dbPayload = sanitizeStudentPayload(newStudent);
     
     const { data, error } = await supabase.from('students').insert([dbPayload]).select().single();
     if (error || !data) {
@@ -488,7 +545,8 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
 
     // Also sync the profile in Supabase profiles table for unified multi-device login
     try {
-      await supabase.from('profiles').upsert([studentProfile], { onConflict: 'id' });
+      const sanitizedProfile = sanitizeProfilePayload(studentProfile);
+      await supabase.from('profiles').upsert([sanitizedProfile], { onConflict: 'id' });
     } catch (profErr) {
       console.warn('[Portal DB] Profile sync warning for student:', profErr);
     }
@@ -518,10 +576,10 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
 
 export async function updateStudent(id: string, updates: Partial<Student>): Promise<Student> {
   if (isSupabaseConfigured) {
-    const dbPayload: any = { ...updates };
-    delete dbPayload.class_name;
-    delete dbPayload.section_name;
-    dbPayload.updated_at = new Date().toISOString();
+    const dbPayload = sanitizeStudentPayload({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    });
     
     const { data, error } = await supabase.from('students').update(dbPayload).eq('id', id).select().single();
     if (error || !data) {
@@ -543,10 +601,10 @@ export async function updateStudent(id: string, updates: Partial<Student>): Prom
       if (updates.avatar_url !== undefined) profileUpdates.avatar_url = updates.avatar_url;
       if (updates.pending_avatar_url !== undefined) profileUpdates.pending_avatar_url = updates.pending_avatar_url;
       if (updates.pending_avatar_status !== undefined) profileUpdates.pending_avatar_status = updates.pending_avatar_status;
-      if (updates.pending_avatar_requested_at !== undefined) profileUpdates.pending_avatar_requested_at = updates.pending_avatar_requested_at;
 
-      if (Object.keys(profileUpdates).length > 1) {
-        await supabase.from('profiles').update(profileUpdates).eq('id', id);
+      const sanitizedProfileUpdates = sanitizeProfilePayload(profileUpdates);
+      if (Object.keys(sanitizedProfileUpdates).length > 1) {
+        await supabase.from('profiles').update(sanitizedProfileUpdates).eq('id', id);
       }
     } catch (e) {
       console.warn('[Portal DB] Profile sync on student update warning:', e);
@@ -591,7 +649,6 @@ export async function requestStudentPhotoChange(studentId: string, photoUrl: str
   const updates: Partial<Student> = {
     pending_avatar_url: photoUrl,
     pending_avatar_status: 'pending',
-    pending_avatar_requested_at: new Date().toISOString(),
   };
   return updateStudent(studentId, updates);
 }
@@ -605,7 +662,6 @@ export async function approveStudentPhotoChange(studentId: string): Promise<Stud
     avatar_url: st.pending_avatar_url,
     pending_avatar_url: null,
     pending_avatar_status: 'approved',
-    pending_avatar_requested_at: null,
   };
   return updateStudent(studentId, updates);
 }
@@ -614,7 +670,6 @@ export async function rejectStudentPhotoChange(studentId: string): Promise<Stude
   const updates: any = {
     pending_avatar_url: null,
     pending_avatar_status: 'rejected',
-    pending_avatar_requested_at: null,
   };
   return updateStudent(studentId, updates);
 }
