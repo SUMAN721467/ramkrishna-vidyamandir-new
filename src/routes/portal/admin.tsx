@@ -57,6 +57,14 @@ import {
   rejectStudentPhotoChange,
   generateDefaultPassword,
   updateUserPassword,
+  fetchScheduledExams,
+  addScheduledExam,
+  updateScheduledExam,
+  deleteScheduledExam,
+  fetchClassTimetable,
+  addClassTimetableEntry,
+  updateClassTimetableEntry,
+  deleteClassTimetableEntry,
 } from '../../lib/portal-db';
 import { formatDateDDMMYYYY } from '../../lib/format';
 import { uploadProfilePhoto } from '../../lib/storage';
@@ -68,6 +76,9 @@ import type {
   Student,
   AttendanceRecord,
   Notice,
+  ScheduledExam,
+  ClassTimetableEntry,
+  DayOfWeek,
   UserRole,
 } from '../../types/portal';
 
@@ -75,12 +86,14 @@ export const Route = createFileRoute('/portal/admin')({
   component: AdminDashboardPage,
 });
 
+const DAYS_OF_WEEK: DayOfWeek[] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 function AdminDashboardPage() {
-  const { role, loading: authLoading } = useAuth();
+  const { user, profile, role, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
-  // Active Tab state: 'overview' | 'students' | 'teachers' | 'parents' | 'classes' | 'attendance' | 'notices'
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'parents' | 'classes' | 'attendance' | 'notices'>('overview');
+  // Active Tab state: 'overview' | 'students' | 'teachers' | 'parents' | 'classes' | 'attendance' | 'timetable' | 'exams' | 'notices'
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'parents' | 'classes' | 'attendance' | 'timetable' | 'exams' | 'notices'>('overview');
 
   // Loading state
   const [loading, setLoading] = useState(true);
@@ -93,10 +106,55 @@ function AdminDashboardPage() {
   const [parents, setParents] = useState<Profile[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [scheduledExams, setScheduledExams] = useState<ScheduledExam[]>([]);
+  const [classTimetables, setClassTimetables] = useState<ClassTimetableEntry[]>([]);
 
-  // Class-wise filter in Student Directory
+  // Class Timetable Management State
+  const [selectedRoutineClass, setSelectedRoutineClass] = useState<string>('c7');
+  const [selectedRoutineDay, setSelectedRoutineDay] = useState<DayOfWeek>('Monday');
+  const [showTimetableModal, setShowTimetableModal] = useState(false);
+  const [editingTimetableEntry, setEditingTimetableEntry] = useState<ClassTimetableEntry | null>(null);
+  const [savingTimetable, setSavingTimetable] = useState(false);
+  const [timetableForm, setTimetableForm] = useState<{
+    class_id: string;
+    day_of_week: DayOfWeek;
+    period_number: number;
+    start_time: string;
+    end_time: string;
+    subject: string;
+    teacher_name: string;
+    room_number: string;
+  }>({
+    class_id: 'c7',
+    day_of_week: 'Monday',
+    period_number: 1,
+    start_time: '10:30 AM',
+    end_time: '11:15 AM',
+    subject: 'Mathematics',
+    teacher_name: 'Sourav Ganguly',
+    room_number: 'Room 101',
+  });
+
+  // Class-wise filter in Student Directory & Exams
   const [filterClassId, setFilterClassId] = useState<string>('all');
+  const [examClassFilter, setExamClassFilter] = useState<string>('all');
   const [deleteStudentId, setDeleteStudentId] = useState<string | null>(null);
+
+  // Exam Scheduling Form & Modal state
+  const [showExamModal, setShowExamModal] = useState(false);
+  const [editingExam, setEditingExam] = useState<ScheduledExam | null>(null);
+  const [savingExam, setSavingExam] = useState(false);
+  const [examForm, setExamForm] = useState({
+    exam_name: '1st Unit Assessment 2026',
+    class_id: '',
+    subject: 'Mathematics',
+    date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+    time: '10:30 AM',
+    duration: '2 Hours',
+    full_marks: 100,
+    room_number: 'Room 101',
+    instructions: 'Students must carry admit card and school ID.',
+  });
 
   // Viewing Individual Student Details Dashboard state
   const [viewingStudentDetails, setViewingStudentDetails] = useState<Student | null>(null);
@@ -177,7 +235,7 @@ function AdminDashboardPage() {
       } else if (role !== 'admin') {
         toast.error('Access Restricted: Admin clearance required.');
         if (role === 'teacher') navigate({ to: '/portal/teacher' });
-        else navigate({ to: '/portal/parent' });
+        else navigate({ to: '/portal/student' });
       }
     }
   }, [role, authLoading, navigate]);
@@ -192,6 +250,8 @@ function AdminDashboardPage() {
       const profs = await fetchProfiles();
       const att = await fetchAttendance({});
       const nots = await fetchNotices();
+      const ex = await fetchScheduledExams();
+      const tt = await fetchClassTimetable('all');
 
       setClasses(cls);
       setSections(sec);
@@ -200,10 +260,16 @@ function AdminDashboardPage() {
       setParents(profs.filter((p) => p.role === 'parent'));
       setAttendanceRecords(att);
       setNotices(nots);
+      setScheduledExams(ex);
+      setClassTimetables(tt);
 
       if (cls.length > 0) {
         setStudentForm((prev) => ({ ...prev, class_id: cls[0].id }));
         setTeacherForm((prev) => ({ ...prev, assigned_class_id: cls[0].id }));
+        setExamForm((prev) => ({ ...prev, class_id: cls[0].id }));
+        if (!selectedRoutineClass) {
+          setSelectedRoutineClass(cls[0].id);
+        }
       }
       if (sec.length > 0) {
         setStudentForm((prev) => ({ ...prev, section_id: sec[0].id }));
@@ -217,6 +283,186 @@ function AdminDashboardPage() {
       toast.error(err?.message || 'Failed to load portal data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Class Timetable / Daily Routine Handlers (Admin Only)
+  const openCreateTimetableModal = (defaultDay?: DayOfWeek) => {
+    setEditingTimetableEntry(null);
+    setTimetableForm({
+      class_id: selectedRoutineClass || classes[0]?.id || 'c7',
+      day_of_week: defaultDay || selectedRoutineDay || 'Monday',
+      period_number: 1,
+      start_time: '10:30 AM',
+      end_time: '11:15 AM',
+      subject: 'Bengali (1st Language)',
+      teacher_name: teachers[0]?.full_name || 'Subrata Sen',
+      room_number: 'Room 101',
+    });
+    setShowTimetableModal(true);
+  };
+
+  const openEditTimetableModal = (entry: ClassTimetableEntry) => {
+    setEditingTimetableEntry(entry);
+    setTimetableForm({
+      class_id: entry.class_id,
+      day_of_week: entry.day_of_week,
+      period_number: entry.period_number,
+      start_time: entry.start_time,
+      end_time: entry.end_time,
+      subject: entry.subject,
+      teacher_name: entry.teacher_name,
+      room_number: entry.room_number || '',
+    });
+    setShowTimetableModal(true);
+  };
+
+  const handleSaveTimetable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!timetableForm.class_id || !timetableForm.subject || !timetableForm.teacher_name || !timetableForm.start_time || !timetableForm.end_time) {
+      toast.error('Please fill in all required routine fields.');
+      return;
+    }
+
+    setSavingTimetable(true);
+    try {
+      if (editingTimetableEntry) {
+        await updateClassTimetableEntry(editingTimetableEntry.id, {
+          class_id: timetableForm.class_id,
+          day_of_week: timetableForm.day_of_week,
+          period_number: Number(timetableForm.period_number) || 1,
+          start_time: timetableForm.start_time.trim(),
+          end_time: timetableForm.end_time.trim(),
+          subject: timetableForm.subject.trim(),
+          teacher_name: timetableForm.teacher_name.trim(),
+          room_number: timetableForm.room_number?.trim() || '',
+        });
+        toast.success('Timetable period updated successfully!');
+      } else {
+        await addClassTimetableEntry({
+          class_id: timetableForm.class_id,
+          day_of_week: timetableForm.day_of_week,
+          period_number: Number(timetableForm.period_number) || 1,
+          start_time: timetableForm.start_time.trim(),
+          end_time: timetableForm.end_time.trim(),
+          subject: timetableForm.subject.trim(),
+          teacher_name: timetableForm.teacher_name.trim(),
+          room_number: timetableForm.room_number?.trim() || '',
+        });
+        toast.success('Period slot added to timetable!');
+      }
+      setShowTimetableModal(false);
+      loadData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to save timetable slot');
+    } finally {
+      setSavingTimetable(false);
+    }
+  };
+
+  const handleDeleteTimetable = async (id: string, subject: string, day: string, period: number) => {
+    if (window.confirm(`Are you sure you want to remove Period ${period} (${subject}) on ${day}?`)) {
+      try {
+        await deleteClassTimetableEntry(id);
+        toast.success('Timetable period deleted.');
+        loadData();
+      } catch (err: any) {
+        toast.error(err?.message || 'Failed to delete timetable slot');
+      }
+    }
+  };
+
+  // Exam Scheduling Handlers
+  const openCreateExamModal = () => {
+    setEditingExam(null);
+    setExamForm({
+      exam_name: '1st Unit Assessment 2026',
+      class_id: classes[0]?.id || 'c5',
+      subject: 'Mathematics',
+      date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+      time: '10:30 AM',
+      duration: '2 Hours',
+      full_marks: 100,
+      room_number: 'Room 101',
+      instructions: 'Students must carry admit card and school ID card.',
+    });
+    setShowExamModal(true);
+  };
+
+  const openEditExamModal = (exam: ScheduledExam) => {
+    setEditingExam(exam);
+    setExamForm({
+      exam_name: exam.exam_name,
+      class_id: exam.class_id,
+      subject: exam.subject,
+      date: exam.date,
+      time: exam.time,
+      duration: exam.duration,
+      full_marks: Number(exam.full_marks) || 100,
+      room_number: exam.room_number || '',
+      instructions: exam.instructions || '',
+    });
+    setShowExamModal(true);
+  };
+
+  const handleSaveExam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!examForm.exam_name || !examForm.subject || !examForm.date || !examForm.time || !examForm.class_id) {
+      toast.error('Please fill in all required exam fields.');
+      return;
+    }
+
+    setSavingExam(true);
+    const adminName = profile?.full_name ? `${profile.full_name} (Admin)` : 'School Admin';
+    try {
+      if (editingExam) {
+        await updateScheduledExam(editingExam.id, {
+          exam_name: examForm.exam_name.trim(),
+          class_id: examForm.class_id,
+          subject: examForm.subject.trim(),
+          date: examForm.date,
+          time: examForm.time.trim(),
+          duration: examForm.duration.trim(),
+          full_marks: Number(examForm.full_marks) || 100,
+          room_number: examForm.room_number?.trim(),
+          instructions: examForm.instructions?.trim(),
+          updated_by_name: adminName,
+        });
+        toast.success('Exam schedule updated successfully!');
+      } else {
+        await addScheduledExam({
+          exam_name: examForm.exam_name.trim(),
+          class_id: examForm.class_id,
+          subject: examForm.subject.trim(),
+          date: examForm.date,
+          time: examForm.time.trim(),
+          duration: examForm.duration.trim(),
+          full_marks: Number(examForm.full_marks) || 100,
+          room_number: examForm.room_number?.trim(),
+          instructions: examForm.instructions?.trim(),
+          created_by: user?.id || 'admin',
+          created_by_name: adminName,
+        });
+        toast.success('New exam scheduled successfully!');
+      }
+      setShowExamModal(false);
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save exam');
+    } finally {
+      setSavingExam(false);
+    }
+  };
+
+  const handleDeleteExam = async (id: string, name: string) => {
+    if (window.confirm(`Are you sure you want to delete the scheduled exam "${name}"?`)) {
+      try {
+        await deleteScheduledExam(id);
+        toast.success('Exam deleted successfully.');
+        loadData();
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to delete exam');
+      }
     }
   };
 
@@ -443,6 +689,8 @@ function AdminDashboardPage() {
               { id: 'students', label: `Students (${students.length})`, icon: GraduationCap },
               { id: 'teachers', label: `Teachers (${teachers.length})`, icon: UserCheck },
               { id: 'attendance', label: 'Attendance & Export', icon: FileSpreadsheet },
+              { id: 'timetable', label: `Class Routine (${classTimetables.length})`, icon: Clock },
+              { id: 'exams', label: `Exams & Timetables (${scheduledExams.length})`, icon: Calendar },
               { id: 'notices', label: `Notices (${notices.length})`, icon: Megaphone },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -470,65 +718,95 @@ function AdminDashboardPage() {
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            {/* Top Stat Cards (4-Column Layout) */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
+            {/* Top Stat Cards (6-Column Layout) */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Total Students
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Students
                   </span>
-                  <span className="grid size-10 place-items-center rounded-2xl bg-primary/10 text-primary">
-                    <GraduationCap className="size-5" />
+                  <span className="grid size-9 place-items-center rounded-2xl bg-primary/10 text-primary">
+                    <GraduationCap className="size-4.5" />
                   </span>
                 </div>
-                <div className="mt-4 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-foreground">{students.length}</span>
-                  <span className="text-xs text-emerald-600 font-semibold">Active Enrolled</span>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold text-foreground">{students.length}</span>
+                  <span className="text-[11px] text-emerald-600 font-semibold">Enrolled</span>
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
+              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Active Teachers
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Teachers
                   </span>
-                  <span className="grid size-10 place-items-center rounded-2xl bg-amber-500/10 text-amber-600">
-                    <UserCheck className="size-5" />
+                  <span className="grid size-9 place-items-center rounded-2xl bg-amber-500/10 text-amber-600">
+                    <UserCheck className="size-4.5" />
                   </span>
                 </div>
-                <div className="mt-4 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-foreground">{teachers.length}</span>
-                  <span className="text-xs text-amber-600 font-semibold">Onboarded Staff</span>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold text-foreground">{teachers.length}</span>
+                  <span className="text-[11px] text-amber-600 font-semibold">Staff</span>
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
+              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Active Classes
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Classes
                   </span>
-                  <span className="grid size-10 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
-                    <BookOpen className="size-5" />
+                  <span className="grid size-9 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
+                    <BookOpen className="size-4.5" />
                   </span>
                 </div>
-                <div className="mt-4 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-foreground">{classes.length}</span>
-                  <span className="text-xs text-emerald-600 font-semibold">Grade Levels (Nursery - Class 10)</span>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold text-foreground">{classes.length}</span>
+                  <span className="text-[11px] text-emerald-600 font-semibold">Grades</span>
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-border bg-card p-6 shadow-soft">
+              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Attendance Logged
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Attendance
                   </span>
-                  <span className="grid size-10 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-600">
-                    <FileSpreadsheet className="size-5" />
+                  <span className="grid size-9 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-600">
+                    <FileSpreadsheet className="size-4.5" />
                   </span>
                 </div>
-                <div className="mt-4 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-foreground">{attendanceRecords.length}</span>
-                  <span className="text-xs text-indigo-600 font-semibold">Total Entries</span>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold text-foreground">{attendanceRecords.length}</span>
+                  <span className="text-[11px] text-indigo-600 font-semibold">Entries</span>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Routine Slots
+                  </span>
+                  <span className="grid size-9 place-items-center rounded-2xl bg-blue-500/10 text-blue-600">
+                    <Clock className="size-4.5" />
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold text-foreground">{classTimetables.length}</span>
+                  <span className="text-[11px] text-blue-600 font-semibold">Periods</span>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Scheduled Exams
+                  </span>
+                  <span className="grid size-9 place-items-center rounded-2xl bg-purple-500/10 text-purple-600">
+                    <Calendar className="size-4.5" />
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-2xl font-extrabold text-foreground">{scheduledExams.length}</span>
+                  <span className="text-[11px] text-purple-600 font-semibold">Timetables</span>
                 </div>
               </div>
             </div>
@@ -860,15 +1138,15 @@ function AdminDashboardPage() {
                         </div>
 
                         {/* Top Performance Badge */}
-                        <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5 text-center md:text-right shrink-0">
+                        <div className="rounded-2xl border border-border bg-muted/20 p-5 text-center md:text-right shrink-0">
                           <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
                             Academic & Attendance Status
                           </span>
-                          <span className="text-2xl font-extrabold text-emerald-600 block mt-1">
-                            Grade A+ (91.4%)
+                          <span className="text-lg font-bold text-amber-600 dark:text-amber-400 block mt-1">
+                            Evaluation Pending
                           </span>
                           <span className="text-xs text-muted-foreground font-medium block">
-                            Class Rank: #02 • Excellent Standing
+                            Attendance Rate: 100% • Official Record
                           </span>
                         </div>
                       </div>
@@ -1026,47 +1304,15 @@ function AdminDashboardPage() {
                         <div className="flex items-center justify-between">
                           <h3 className="text-base font-bold text-foreground flex items-center gap-2">
                             <BookOpen className="size-5 text-primary" />
-                            Unit Assessment Performance (Term 1)
+                            Academic Marks & Assessment Records
                           </h3>
-                          <span className="text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-1 rounded-full">
-                            Overall Status: Passed
-                          </span>
                         </div>
 
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left text-sm">
-                            <thead className="bg-muted/40 text-xs uppercase text-muted-foreground font-semibold border-b border-border">
-                              <tr>
-                                <th className="px-4 py-3">Subject</th>
-                                <th className="px-4 py-3">Marks Obtained</th>
-                                <th className="px-4 py-3">Max Marks</th>
-                                <th className="px-4 py-3">Grade</th>
-                                <th className="px-4 py-3">Remarks</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border text-xs">
-                              {[
-                                { sub: 'Bengali (First Language)', got: 94, max: 100, grade: 'AA', rem: 'Outstanding' },
-                                { sub: 'English (Second Language)', got: 88, max: 100, grade: 'A+', rem: 'Excellent' },
-                                { sub: 'Mathematics', got: 95, max: 100, grade: 'AA', rem: 'Outstanding' },
-                                { sub: 'General Science', got: 90, max: 100, grade: 'A+', rem: 'Very Good' },
-                                { sub: 'Social Science / History', got: 89, max: 100, grade: 'A+', rem: 'Very Good' },
-                                { sub: 'Geography', got: 92, max: 100, grade: 'AA', rem: 'Outstanding' },
-                              ].map((item, idx) => (
-                                <tr key={idx} className="hover:bg-muted/20">
-                                  <td className="px-4 py-3 font-bold text-foreground">{item.sub}</td>
-                                  <td className="px-4 py-3 font-mono font-bold text-primary">{item.got}</td>
-                                  <td className="px-4 py-3 font-mono text-muted-foreground">{item.max}</td>
-                                  <td className="px-4 py-3">
-                                    <span className="rounded-md bg-primary/10 px-2 py-0.5 font-bold text-primary">
-                                      {item.grade}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 text-muted-foreground">{item.rem}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                        <div className="rounded-2xl border border-dashed border-border p-8 text-center text-xs text-muted-foreground space-y-2">
+                          <p className="font-semibold text-foreground">Examination Marks Managed by Class Teachers</p>
+                          <p className="text-muted-foreground max-w-md mx-auto">
+                            Class subject teachers record and publish unit assessment and terminal evaluation marks directly from the Teacher Portal. Once submitted, marks are reflected on official student report cards.
+                          </p>
                         </div>
                       </div>
                     )}
@@ -1615,6 +1861,378 @@ function AdminDashboardPage() {
             </div>
           </div>
         )}
+
+        {/* CLASS ROUTINE / TIMETABLE TAB */}
+        {activeTab === 'timetable' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Header & Controls */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <Clock className="size-5 text-primary" />
+                    Class Timetables & Daily Period Routine
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Configure weekly period schedules and daily routines for each class. Changes automatically synchronize and reflect on respective student dashboards.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openCreateTimetableModal(selectedRoutineDay)}
+                    className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all"
+                  >
+                    <Plus className="size-4" />
+                    Add Period Slot
+                  </button>
+                </div>
+              </div>
+
+              {/* Class & Day Selector Toolbar */}
+              <div className="pt-4 border-t border-border/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                {/* Select Class */}
+                <div className="flex items-center gap-3">
+                  <label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                    Select Class:
+                  </label>
+                  <select
+                    value={selectedRoutineClass}
+                    onChange={(e) => setSelectedRoutineClass(e.target.value)}
+                    className="rounded-xl border border-input bg-background px-3.5 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    {classes.map((c) => {
+                      const count = classTimetables.filter((t) => t.class_id === c.id).length;
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({count} {count === 1 ? 'Period' : 'Periods'})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {/* Day Navigation Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {DAYS_OF_WEEK.map((day) => {
+                    const count = classTimetables.filter(
+                      (t) => t.class_id === selectedRoutineClass && t.day_of_week === day
+                    ).length;
+                    const active = selectedRoutineDay === day;
+
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => setSelectedRoutineDay(day)}
+                        className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all whitespace-nowrap ${
+                          active
+                            ? 'bg-primary text-primary-foreground shadow-soft'
+                            : 'border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        <span>{day}</span>
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] font-extrabold ${
+                            active ? 'bg-primary-dark text-white' : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Timetable Period Grid for Selected Class & Day */}
+            {(() => {
+              const currentPeriods = classTimetables.filter(
+                (t) => t.class_id === selectedRoutineClass && t.day_of_week === selectedRoutineDay
+              );
+              const selectedCls = classes.find((c) => c.id === selectedRoutineClass);
+
+              if (currentPeriods.length === 0) {
+                return (
+                  <div className="rounded-3xl border border-border bg-card p-12 text-center shadow-soft space-y-4">
+                    <div className="size-16 rounded-2xl bg-primary/10 text-primary grid place-items-center mx-auto">
+                      <Clock className="size-8" />
+                    </div>
+                    <div className="max-w-md mx-auto space-y-2">
+                      <h4 className="text-base font-bold text-foreground">
+                        No Periods Scheduled on {selectedRoutineDay}
+                      </h4>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        There are no routine periods scheduled for {selectedCls?.name || 'this class'} on {selectedRoutineDay}. Click below to add period slots.
+                      </p>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => openCreateTimetableModal(selectedRoutineDay)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark"
+                        >
+                          <Plus className="size-4" />
+                          Add Period Slot for {selectedRoutineDay}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {currentPeriods.map((period) => (
+                    <div
+                      key={period.id}
+                      className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
+                    >
+                      {/* Top bar: Period Number & Timing */}
+                      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
+                        <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
+                          <Clock className="size-3.5" />
+                          Period {period.period_number}
+                        </span>
+
+                        <span className="text-xs font-mono font-bold text-foreground">
+                          {period.start_time} - {period.end_time}
+                        </span>
+                      </div>
+
+                      {/* Middle: Subject & Room */}
+                      <div className="space-y-1.5">
+                        <h4 className="text-base font-extrabold text-foreground tracking-tight">
+                          {period.subject}
+                        </h4>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                          <BookOpen className="size-3.5 text-primary shrink-0" />
+                          <span>Room: <strong>{period.room_number || 'General Classroom'}</strong></span>
+                        </p>
+                      </div>
+
+                      {/* Bottom bar: Teacher & Admin Actions */}
+                      <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
+                        <span className="font-bold text-foreground flex items-center gap-1.5">
+                          <User className="size-3.5 text-muted-foreground" />
+                          {period.teacher_name}
+                        </span>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditTimetableModal(period)}
+                            className="size-7 rounded-lg border border-border bg-card grid place-items-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                            title="Edit Period"
+                          >
+                            <Edit2 className="size-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTimetable(period.id, period.subject, period.day_of_week, period.period_number)}
+                            className="size-7 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
+                            title="Delete Period"
+                          >
+                            <Trash2 className="size-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* EXAMS & TIMETABLES TAB */}
+        {activeTab === 'exams' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Header & Controls */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <Calendar className="size-5 text-primary" />
+                    Class Examination Timetables & Schedules
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Schedule, modify, and manage examination schedules for each class. Timetables are visible exclusively to enrolled students of that class.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={openCreateExamModal}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all shrink-0"
+                >
+                  <Plus className="size-4" />
+                  Schedule New Exam
+                </button>
+              </div>
+
+              {/* Class Filter Dropdown */}
+              <div className="pt-3 border-t border-border/60 flex flex-wrap items-center gap-3">
+                <label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                  Filter by Class:
+                </label>
+                <select
+                  value={examClassFilter}
+                  onChange={(e) => setExamClassFilter(e.target.value)}
+                  className="rounded-xl border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="all">All Classes ({scheduledExams.length} Total Exams)</option>
+                  {classes.map((c) => {
+                    const count = scheduledExams.filter((e) => e.class_id === c.id).length;
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({count} {count === 1 ? 'Exam' : 'Exams'})
+                      </option>
+                    );
+                  })}
+                </select>
+
+                <span className="text-xs text-muted-foreground font-mono">
+                  Showing {scheduledExams.filter((e) => examClassFilter === 'all' || e.class_id === examClassFilter).length} exams
+                </span>
+              </div>
+            </div>
+
+            {/* Exam Table / List */}
+            {(() => {
+              const displayExams = scheduledExams.filter(
+                (e) => examClassFilter === 'all' || e.class_id === examClassFilter
+              );
+
+              if (displayExams.length === 0) {
+                return (
+                  <div className="rounded-3xl border border-border bg-card p-12 text-center shadow-soft space-y-4">
+                    <div className="size-16 rounded-2xl bg-primary/10 text-primary grid place-items-center mx-auto">
+                      <Calendar className="size-8" />
+                    </div>
+                    <div className="max-w-md mx-auto space-y-2">
+                      <h4 className="text-base font-bold text-foreground">
+                        No Examination Schedules Found
+                      </h4>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {examClassFilter === 'all'
+                          ? 'No examinations have been scheduled in the school system yet. Click "Schedule New Exam" to create timetables for students.'
+                          : 'No examinations are scheduled for this class. Click "Schedule New Exam" to schedule an assessment.'}
+                      </p>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="rounded-3xl border border-border bg-card shadow-soft overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-muted/50 text-[11px] uppercase text-muted-foreground font-semibold border-b border-border">
+                        <tr>
+                          <th className="px-4 py-3">Class</th>
+                          <th className="px-4 py-3">Exam & Subject</th>
+                          <th className="px-4 py-3">Date & Time</th>
+                          <th className="px-4 py-3">Full Marks</th>
+                          <th className="px-4 py-3">Room / Notes</th>
+                          <th className="px-4 py-3">Scheduled By</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border text-xs">
+                        {displayExams.map((exam) => (
+                          <tr key={exam.id} className="hover:bg-muted/30 transition-colors">
+                            {/* Class */}
+                            <td className="px-4 py-3.5 whitespace-nowrap">
+                              <span className="inline-flex items-center rounded-lg bg-primary/10 text-primary px-2.5 py-1 text-xs font-bold">
+                                {exam.class_name || 'Class'}
+                              </span>
+                            </td>
+
+                            {/* Exam Title & Subject */}
+                            <td className="px-4 py-3.5">
+                              <p className="font-bold text-foreground text-sm">{exam.subject}</p>
+                              <p className="text-xs text-muted-foreground">{exam.exam_name}</p>
+                            </td>
+
+                            {/* Date, Time & Duration */}
+                            <td className="px-4 py-3.5 whitespace-nowrap">
+                              <p className="font-bold text-foreground flex items-center gap-1.5">
+                                <Calendar className="size-3.5 text-primary" />
+                                {formatDateDDMMYYYY(exam.date)}
+                              </p>
+                              <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                <Clock className="size-3.5 text-muted-foreground" />
+                                {exam.time} ({exam.duration})
+                              </p>
+                            </td>
+
+                            {/* Full Marks */}
+                            <td className="px-4 py-3.5 whitespace-nowrap">
+                              <span className="inline-flex items-center rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 px-2.5 py-1 font-bold text-xs">
+                                {exam.full_marks} Marks
+                              </span>
+                            </td>
+
+                            {/* Room & Instructions */}
+                            <td className="px-4 py-3.5 max-w-xs">
+                              {exam.room_number && (
+                                <p className="font-semibold text-foreground truncate">
+                                  Room: {exam.room_number}
+                                </p>
+                              )}
+                              {exam.instructions && (
+                                <p className="text-muted-foreground truncate" title={exam.instructions}>
+                                  {exam.instructions}
+                                </p>
+                              )}
+                              {!exam.room_number && !exam.instructions && (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+
+                            {/* Scheduled By & Updated By */}
+                            <td className="px-4 py-3.5 whitespace-nowrap">
+                              <p className="font-bold text-foreground">{exam.created_by_name}</p>
+                              {exam.updated_by_name && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Updated: {exam.updated_by_name}
+                                </p>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditExamModal(exam)}
+                                  className="size-8 rounded-xl border border-border bg-card grid place-items-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                  title="Edit Exam"
+                                >
+                                  <Edit2 className="size-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteExam(exam.id, exam.subject)}
+                                  className="size-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
+                                  title="Delete Exam"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
       </main>
 
       {/* CONFIRM DELETE ATTENDANCE MODAL */}
@@ -2056,6 +2674,392 @@ function AdminDashboardPage() {
                   className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark"
                 >
                   Save New Password
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EXAM SCHEDULING FORM MODAL */}
+      {showExamModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-xl rounded-3xl border border-border bg-card p-6 shadow-2xl space-y-5 text-card-foreground">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                <Calendar className="size-5 text-primary" />
+                {editingExam ? 'Edit Examination Schedule' : 'Schedule New Class Examination'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowExamModal(false)}
+                className="size-8 rounded-xl grid place-items-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveExam} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Class */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Class *
+                  </label>
+                  <select
+                    value={examForm.class_id}
+                    onChange={(e) => setExamForm({ ...examForm, class_id: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Exam Title */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Assessment Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={examForm.exam_name}
+                    onChange={(e) => setExamForm({ ...examForm, exam_name: e.target.value })}
+                    placeholder="e.g. 1st Unit Test 2026"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Subject */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Subject *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={examForm.subject}
+                    onChange={(e) => setExamForm({ ...examForm, subject: e.target.value })}
+                    placeholder="e.g. Mathematics"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Full Marks */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Full Marks *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={10}
+                    max={200}
+                    value={examForm.full_marks}
+                    onChange={(e) => setExamForm({ ...examForm, full_marks: Number(e.target.value) || 100 })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Date */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Exam Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={examForm.date}
+                    onChange={(e) => setExamForm({ ...examForm, date: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Time */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Start Time *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={examForm.time}
+                    onChange={(e) => setExamForm({ ...examForm, time: e.target.value })}
+                    placeholder="e.g. 10:30 AM"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Duration */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Duration *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={examForm.duration}
+                    onChange={(e) => setExamForm({ ...examForm, duration: e.target.value })}
+                    placeholder="e.g. 2 Hours"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Room Number */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Room / Hall Number
+                  </label>
+                  <input
+                    type="text"
+                    value={examForm.room_number}
+                    onChange={(e) => setExamForm({ ...examForm, room_number: e.target.value })}
+                    placeholder="e.g. Main Hall (Room 102)"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Instructions */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Special Instructions
+                  </label>
+                  <input
+                    type="text"
+                    value={examForm.instructions}
+                    onChange={(e) => setExamForm({ ...examForm, instructions: e.target.value })}
+                    placeholder="e.g. Bring Admit Card and geometry set"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowExamModal(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingExam}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                >
+                  {savingExam ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  {editingExam ? 'Update Schedule' : 'Publish Exam'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CLASS TIMETABLE / PERIOD SLOT MODAL (ADMIN ONLY) */}
+      {showTimetableModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-lg rounded-3xl border border-border bg-card p-6 shadow-2xl space-y-5 text-card-foreground">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                <Clock className="size-5 text-primary" />
+                {editingTimetableEntry ? 'Edit Timetable Period' : 'Add Period Slot to Timetable'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowTimetableModal(false)}
+                className="size-8 rounded-xl grid place-items-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTimetable} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Class */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Class *
+                  </label>
+                  <select
+                    value={timetableForm.class_id}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, class_id: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Day of Week */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Day of Week *
+                  </label>
+                  <select
+                    value={timetableForm.day_of_week}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, day_of_week: e.target.value as DayOfWeek })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    {DAYS_OF_WEEK.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Period Number */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Period Number *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    max={10}
+                    value={timetableForm.period_number}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, period_number: Number(e.target.value) || 1 })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Start Time */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Start Time *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={timetableForm.start_time}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, start_time: e.target.value })}
+                    placeholder="e.g. 10:30 AM"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* End Time */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    End Time *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={timetableForm.end_time}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, end_time: e.target.value })}
+                    placeholder="e.g. 11:15 AM"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Subject */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Subject Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={timetableForm.subject}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, subject: e.target.value })}
+                    placeholder="e.g. Mathematics, Bengali"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Assigned Teacher */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Assigned Teacher *
+                  </label>
+                  <div className="space-y-1.5">
+                    <input
+                      type="text"
+                      required
+                      value={timetableForm.teacher_name}
+                      onChange={(e) => setTimetableForm({ ...timetableForm, teacher_name: e.target.value })}
+                      placeholder="e.g. Sourav Ganguly"
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                    />
+                    {teachers.length > 0 && (
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            setTimetableForm({ ...timetableForm, teacher_name: e.target.value });
+                          }
+                        }}
+                        value=""
+                        className="w-full rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground outline-none"
+                      >
+                        <option value="">-- Quick Select from Registered Teachers --</option>
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.full_name}>
+                            {t.full_name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Room Number */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Classroom / Room Number
+                </label>
+                <input
+                  type="text"
+                  value={timetableForm.room_number}
+                  onChange={(e) => setTimetableForm({ ...timetableForm, room_number: e.target.value })}
+                  placeholder="e.g. Room 101, Science Lab, Computer Lab"
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowTimetableModal(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingTimetable}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                >
+                  {savingTimetable ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  {editingTimetableEntry ? 'Update Period' : 'Save to Timetable'}
                 </button>
               </div>
             </form>

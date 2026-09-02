@@ -216,6 +216,80 @@ DO $$ BEGIN
     CREATE POLICY "Public access to notices" ON public.notices FOR ALL USING (true);
 EXCEPTION WHEN others THEN null; END $$;
 
+-- 10. Student Marks Table
+CREATE TABLE IF NOT EXISTS public.student_marks (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    student_id TEXT NOT NULL,
+    class_id TEXT NOT NULL,
+    section_id TEXT NOT NULL,
+    exam_name TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    full_marks NUMERIC NOT NULL DEFAULT 100,
+    marks_obtained NUMERIC NOT NULL DEFAULT 0,
+    grade TEXT,
+    remarks TEXT,
+    teacher_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.student_marks ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to student_marks" ON public.student_marks;
+    CREATE POLICY "Public access to student_marks" ON public.student_marks FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
+
+-- 11. Scheduled Exams Table
+CREATE TABLE IF NOT EXISTS public.scheduled_exams (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    exam_name TEXT NOT NULL,
+    class_id TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    date DATE NOT NULL,
+    time TEXT NOT NULL,
+    duration TEXT NOT NULL,
+    full_marks NUMERIC NOT NULL DEFAULT 100,
+    room_number TEXT,
+    instructions TEXT,
+    created_by TEXT NOT NULL,
+    created_by_name TEXT NOT NULL,
+    updated_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.scheduled_exams ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to scheduled_exams" ON public.scheduled_exams;
+    CREATE POLICY "Public access to scheduled_exams" ON public.scheduled_exams FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
+
+-- 12. Class Timetables & Daily Routine Table
+CREATE TABLE IF NOT EXISTS public.class_timetables (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    class_id TEXT NOT NULL,
+    day_of_week TEXT NOT NULL,
+    period_number INTEGER NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    time_slot TEXT,
+    subject TEXT NOT NULL,
+    teacher_name TEXT NOT NULL,
+    teacher_id TEXT,
+    room_number TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.class_timetables ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to class_timetables" ON public.class_timetables;
+    CREATE POLICY "Public access to class_timetables" ON public.class_timetables FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
+
 -- STORAGE BUCKET FOR AVATARS
 INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true)
 ON CONFLICT (id) DO NOTHING;

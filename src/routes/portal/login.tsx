@@ -18,7 +18,7 @@ function PortalLoginPage() {
     if (!authLoading && activeRole) {
       if (activeRole === 'admin') navigate({ to: '/portal/admin' });
       else if (activeRole === 'teacher') navigate({ to: '/portal/teacher' });
-      else navigate({ to: '/portal/parent' });
+      else navigate({ to: '/portal/student' });
     }
   }, [activeRole, authLoading, navigate]);
 
@@ -71,7 +71,7 @@ function PortalLoginPage() {
       toast.success('Logged in successfully!');
       if (res.role === 'admin') navigate({ to: '/portal/admin' });
       else if (res.role === 'teacher') navigate({ to: '/portal/teacher' });
-      else navigate({ to: '/portal/parent' });
+      else navigate({ to: '/portal/student' });
     } else {
       toast.error(res.error || 'Login failed. Please check your credentials.');
     }

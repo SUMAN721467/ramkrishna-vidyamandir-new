@@ -14,7 +14,7 @@ function PortalIndexPage() {
     if (!loading) {
       if (role === 'admin') navigate({ to: '/portal/admin' });
       else if (role === 'teacher') navigate({ to: '/portal/teacher' });
-      else if (role === 'parent') navigate({ to: '/portal/parent' });
+      else if (role === 'parent') navigate({ to: '/portal/student' });
       else navigate({ to: '/portal/login' });
     }
   }, [role, loading, navigate]);

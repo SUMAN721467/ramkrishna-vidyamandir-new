@@ -8,9 +8,10 @@ import { toast } from 'sonner';
 
 interface PortalHeaderProps {
   title: string;
+  avatarUrl?: string;
 }
 
-export function PortalHeader({ title }: PortalHeaderProps) {
+export function PortalHeader({ title, avatarUrl }: PortalHeaderProps) {
   const { profile, role, signOut } = useAuth();
   const navigate = useNavigate();
 
@@ -28,6 +29,7 @@ export function PortalHeader({ title }: PortalHeaderProps) {
       : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-200';
 
   const RoleIcon = role === 'admin' ? Shield : role === 'teacher' ? UserCheck : Users;
+  const displayAvatar = avatarUrl || profile?.avatar_url;
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-card/90 backdrop-blur-md shadow-soft">
@@ -69,9 +71,9 @@ export function PortalHeader({ title }: PortalHeaderProps) {
           {profile && (
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
-                {profile.avatar_url ? (
+                {displayAvatar ? (
                   <img
-                    src={profile.avatar_url}
+                    src={displayAvatar}
                     alt={profile.full_name}
                     className="size-9 rounded-full object-cover border border-primary/20 shadow-xs"
                   />

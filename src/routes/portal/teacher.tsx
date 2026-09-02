@@ -12,6 +12,12 @@ import {
   FileText,
   Megaphone,
   CheckSquare,
+  BookOpen,
+  Award,
+  Plus,
+  Trash2,
+  Edit2,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PortalHeader } from '../../components/portal/PortalHeader';
@@ -21,10 +27,17 @@ import {
   fetchAttendance,
   submitAttendanceBatch,
   fetchNotices,
+  fetchStudentMarks,
+  submitStudentMarksBatch,
+  calculateGrade,
+  fetchScheduledExams,
+  addScheduledExam,
+  updateScheduledExam,
+  deleteScheduledExam,
 } from '../../lib/portal-db';
 import { formatDateDDMMYYYY } from '../../lib/format';
 import { toast } from 'sonner';
-import type { Student, AttendanceRecord, Notice, AttendanceStatus } from '../../types/portal';
+import type { Student, AttendanceRecord, Notice, AttendanceStatus, StudentMark, ScheduledExam } from '../../types/portal';
 
 export const Route = createFileRoute('/portal/teacher')({
   component: TeacherDashboardPage,
@@ -36,6 +49,8 @@ function TeacherDashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingMarks, setSavingMarks] = useState(false);
+  const [savingExam, setSavingExam] = useState(false);
 
   // Teacher Assigned Classes
   const [assignedClasses, setAssignedClasses] = useState<
@@ -57,8 +72,31 @@ function TeacherDashboardPage() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [recentRecords, setRecentRecords] = useState<AttendanceRecord[]>([]);
 
-  // Active Tab: 'take' | 'history' | 'notices'
-  const [activeTab, setActiveTab] = useState<'take' | 'history' | 'notices'>('take');
+  // Marks Entry State
+  const [examName, setExamName] = useState('Unit Assessment 1 (2026)');
+  const [subjectName, setSubjectName] = useState('Mathematics');
+  const [fullMarks, setFullMarks] = useState<number>(100);
+  const [marksMap, setMarksMap] = useState<Record<string, { marks_obtained: string; remarks: string }>>({});
+  const [publishedMarks, setPublishedMarks] = useState<StudentMark[]>([]);
+
+  // Exam Scheduling State
+  const [scheduledExams, setScheduledExams] = useState<ScheduledExam[]>([]);
+  const [showExamModal, setShowExamModal] = useState(false);
+  const [editingExam, setEditingExam] = useState<ScheduledExam | null>(null);
+  const [examForm, setExamForm] = useState({
+    exam_name: 'Unit Assessment 1 (2026)',
+    class_id: '',
+    subject: 'Mathematics',
+    date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+    time: '10:30 AM',
+    duration: '2 Hours',
+    full_marks: 100,
+    room_number: 'Room 101',
+    instructions: 'Bring geometry box and black pen. Arrive 15 mins early.',
+  });
+
+  // Active Tab: 'take' | 'marks' | 'exams' | 'history' | 'notices'
+  const [activeTab, setActiveTab] = useState<'take' | 'marks' | 'exams' | 'history' | 'notices'>('take');
 
   // Protected route check
   useEffect(() => {
@@ -67,7 +105,7 @@ function TeacherDashboardPage() {
         navigate({ to: '/portal/login' });
       } else if (role === 'parent') {
         toast.error('Access Restricted: Teacher clearance required.');
-        navigate({ to: '/portal/parent' });
+        navigate({ to: '/portal/student' });
       }
     }
   }, [role, authLoading, navigate]);
@@ -132,6 +170,35 @@ function TeacherDashboardPage() {
     loadClassData();
   }, [selectedClassId, selectedSectionId, selectedDate]);
 
+  // Load published marks for this class & section
+  useEffect(() => {
+    async function loadMarksData() {
+      if (!selectedClassId || !selectedSectionId) return;
+      try {
+        const marks = await fetchStudentMarks({
+          classId: selectedClassId,
+          sectionId: selectedSectionId,
+          examName: examName,
+        });
+        setPublishedMarks(marks);
+
+        // Pre-fill input map if matching subject exists
+        const initialMap: Record<string, { marks_obtained: string; remarks: string }> = {};
+        students.forEach((st) => {
+          const match = marks.find((m) => m.student_id === st.id && m.subject.toLowerCase() === subjectName.toLowerCase());
+          initialMap[st.id] = {
+            marks_obtained: match ? String(match.marks_obtained) : '',
+            remarks: match?.remarks || '',
+          };
+        });
+        setMarksMap(initialMap);
+      } catch (e) {
+        console.warn('Error loading marks:', e);
+      }
+    }
+    loadMarksData();
+  }, [selectedClassId, selectedSectionId, examName, subjectName, students]);
+
   // Status toggle handler
   const setStudentStatus = (studentId: string, status: AttendanceStatus) => {
     setAttendanceMap((prev) => ({
@@ -186,6 +253,170 @@ function TeacherDashboardPage() {
     }
   };
 
+  // Submit Marks Batch
+  const handleSubmitMarks = async () => {
+    if (students.length === 0) {
+      toast.error('No students in this class section.');
+      return;
+    }
+    const marksToInsert: Omit<StudentMark, 'id' | 'created_at'>[] = [];
+    for (const st of students) {
+      const val = marksMap[st.id]?.marks_obtained;
+      if (val !== undefined && val !== '') {
+        const numericVal = Number(val);
+        if (isNaN(numericVal) || numericVal < 0 || numericVal > fullMarks) {
+          toast.error(`Invalid marks for ${st.first_name}: enter number between 0 and ${fullMarks}`);
+          return;
+        }
+        marksToInsert.push({
+          student_id: st.id,
+          class_id: selectedClassId,
+          section_id: selectedSectionId,
+          exam_name: examName.trim(),
+          subject: subjectName.trim(),
+          full_marks: fullMarks,
+          marks_obtained: numericVal,
+          grade: calculateGrade(numericVal, fullMarks),
+          remarks: marksMap[st.id]?.remarks || '',
+          teacher_id: user?.id,
+        });
+      }
+    }
+
+    if (marksToInsert.length === 0) {
+      toast.error('Please enter marks for at least one student before submitting.');
+      return;
+    }
+
+    setSavingMarks(true);
+    try {
+      await submitStudentMarksBatch(marksToInsert);
+      toast.success(`Marks for ${marksToInsert.length} students published successfully!`);
+      const updatedMarks = await fetchStudentMarks({
+        classId: selectedClassId,
+        sectionId: selectedSectionId,
+        examName: examName,
+      });
+      setPublishedMarks(updatedMarks);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save marks');
+    } finally {
+      setSavingMarks(false);
+    }
+  };
+
+  // Load scheduled exams for selected class
+  const loadClassExams = async () => {
+    if (!selectedClassId) return;
+    try {
+      const ex = await fetchScheduledExams(selectedClassId);
+      setScheduledExams(ex);
+    } catch (err) {
+      console.error('Error loading scheduled exams:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadClassExams();
+  }, [selectedClassId, activeTab]);
+
+  // Open Create Exam Modal
+  const openCreateExamModal = () => {
+    setEditingExam(null);
+    setExamForm({
+      exam_name: 'Unit Assessment 1 (2026)',
+      class_id: selectedClassId,
+      subject: 'Mathematics',
+      date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+      time: '10:30 AM',
+      duration: '2 Hours',
+      full_marks: 100,
+      room_number: 'Room 101',
+      instructions: 'Bring geometry box and black pen. Arrive 15 mins early.',
+    });
+    setShowExamModal(true);
+  };
+
+  // Open Edit Exam Modal
+  const openEditExamModal = (exam: ScheduledExam) => {
+    setEditingExam(exam);
+    setExamForm({
+      exam_name: exam.exam_name,
+      class_id: exam.class_id,
+      subject: exam.subject,
+      date: exam.date,
+      time: exam.time,
+      duration: exam.duration,
+      full_marks: Number(exam.full_marks) || 100,
+      room_number: exam.room_number || '',
+      instructions: exam.instructions || '',
+    });
+    setShowExamModal(true);
+  };
+
+  // Save Exam (Create or Update)
+  const handleSaveExam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!examForm.exam_name || !examForm.subject || !examForm.date || !examForm.time) {
+      toast.error('Please fill in all required exam fields.');
+      return;
+    }
+
+    setSavingExam(true);
+    const creatorName = profile?.full_name ? `${profile.full_name} (Teacher)` : 'Class Teacher';
+    try {
+      if (editingExam) {
+        await updateScheduledExam(editingExam.id, {
+          exam_name: examForm.exam_name.trim(),
+          class_id: examForm.class_id || selectedClassId,
+          subject: examForm.subject.trim(),
+          date: examForm.date,
+          time: examForm.time.trim(),
+          duration: examForm.duration.trim(),
+          full_marks: Number(examForm.full_marks) || 100,
+          room_number: examForm.room_number?.trim(),
+          instructions: examForm.instructions?.trim(),
+          updated_by_name: creatorName,
+        });
+        toast.success('Exam schedule updated successfully!');
+      } else {
+        await addScheduledExam({
+          exam_name: examForm.exam_name.trim(),
+          class_id: examForm.class_id || selectedClassId,
+          subject: examForm.subject.trim(),
+          date: examForm.date,
+          time: examForm.time.trim(),
+          duration: examForm.duration.trim(),
+          full_marks: Number(examForm.full_marks) || 100,
+          room_number: examForm.room_number?.trim(),
+          instructions: examForm.instructions?.trim(),
+          created_by: user?.id || 'teacher',
+          created_by_name: creatorName,
+        });
+        toast.success('New exam scheduled successfully for students!');
+      }
+      setShowExamModal(false);
+      await loadClassExams();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save exam schedule');
+    } finally {
+      setSavingExam(false);
+    }
+  };
+
+  // Delete Exam
+  const handleDeleteExam = async (id: string, name: string) => {
+    if (window.confirm(`Are you sure you want to delete the exam schedule "${name}"?`)) {
+      try {
+        await deleteScheduledExam(id);
+        toast.success('Exam schedule deleted successfully.');
+        await loadClassExams();
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to delete exam');
+      }
+    }
+  };
+
   const presentCount = Object.values(attendanceMap).filter((s) => s === 'present').length;
   const absentCount = Object.values(attendanceMap).filter((s) => s === 'absent').length;
   const lateCount = Object.values(attendanceMap).filter((s) => s === 'late').length;
@@ -200,15 +431,15 @@ function TeacherDashboardPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground pb-16">
-      <PortalHeader title="Teacher Class Dashboard" />
+      <PortalHeader title="Teacher Class Dashboard" avatarUrl={profile?.avatar_url} />
 
       {/* Subnav Tabs */}
       <div className="border-b border-border bg-card/50 backdrop-blur-xs sticky top-[57px] z-30">
         <div className="mx-auto flex max-w-7xl px-4 sm:px-6">
-          <div className="flex space-x-2 py-2">
+          <div className="flex space-x-2 py-2 overflow-x-auto">
             <button
               onClick={() => setActiveTab('take')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all whitespace-nowrap ${
                 activeTab === 'take'
                   ? 'bg-primary text-primary-foreground shadow-soft'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -219,8 +450,32 @@ function TeacherDashboardPage() {
             </button>
 
             <button
+              onClick={() => setActiveTab('marks')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all whitespace-nowrap ${
+                activeTab === 'marks'
+                  ? 'bg-primary text-primary-foreground shadow-soft'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <BookOpen className="size-4" />
+              Upload / Enter Marks
+            </button>
+
+            <button
+              onClick={() => setActiveTab('exams')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all whitespace-nowrap ${
+                activeTab === 'exams'
+                  ? 'bg-primary text-primary-foreground shadow-soft'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <Calendar className="size-4" />
+              Exam Schedules ({scheduledExams.length})
+            </button>
+
+            <button
               onClick={() => setActiveTab('history')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all whitespace-nowrap ${
                 activeTab === 'history'
                   ? 'bg-primary text-primary-foreground shadow-soft'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -232,7 +487,7 @@ function TeacherDashboardPage() {
 
             <button
               onClick={() => setActiveTab('notices')}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all whitespace-nowrap ${
                 activeTab === 'notices'
                   ? 'bg-primary text-primary-foreground shadow-soft'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -459,6 +714,587 @@ function TeacherDashboardPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* UPLOAD / ENTER MARKS TAB */}
+        {activeTab === 'marks' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Marks Control Panel */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <BookOpen className="size-5 text-primary" />
+                    Enter Student Examination Marks
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Record and publish unit test and terminal evaluation marks directly to the student portal.
+                  </p>
+                </div>
+
+                {/* Save Marks Button */}
+                <button
+                  type="button"
+                  onClick={handleSubmitMarks}
+                  disabled={savingMarks || students.length === 0}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                >
+                  {savingMarks ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save & Publish Marks
+                </button>
+              </div>
+
+              {/* Exam, Subject & Class Selectors */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3 border-t border-border/60">
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Class & Section
+                  </label>
+                  <select
+                    value={`${selectedClassId}_${selectedSectionId}`}
+                    onChange={(e) => {
+                      const [cId, sId] = e.target.value.split('_');
+                      setSelectedClassId(cId);
+                      setSelectedSectionId(sId);
+                    }}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    {assignedClasses.map((ac) => (
+                      <option key={`${ac.class_id}_${ac.section_id}`} value={`${ac.class_id}_${ac.section_id}`}>
+                        {ac.class_name} — {ac.section_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Exam / Assessment Name
+                  </label>
+                  <input
+                    type="text"
+                    value={examName}
+                    onChange={(e) => setExamName(e.target.value)}
+                    placeholder="e.g. Unit Test 1 (2026)"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Subject
+                  </label>
+                  <select
+                    value={subjectName}
+                    onChange={(e) => setSubjectName(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="Bengali (1st Language)">Bengali (1st Language)</option>
+                    <option value="English (2nd Language)">English (2nd Language)</option>
+                    <option value="Mathematics">Mathematics</option>
+                    <option value="Science & Environment">Science & Environment</option>
+                    <option value="History & Geography">History & Geography</option>
+                    <option value="Computer & Practical">Computer & Practical</option>
+                    <option value="General Knowledge">General Knowledge</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Full Marks
+                  </label>
+                  <input
+                    type="number"
+                    value={fullMarks}
+                    onChange={(e) => setFullMarks(Number(e.target.value) || 100)}
+                    min={10}
+                    max={200}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Marks Entry Table */}
+            <div className="rounded-3xl border border-border bg-card shadow-soft overflow-hidden">
+              <div className="p-4 bg-muted/40 border-b border-border flex items-center justify-between">
+                <h3 className="text-sm font-bold text-foreground">
+                  Enter Marks for {subjectName} ({examName})
+                </h3>
+                <span className="text-xs text-muted-foreground font-mono">Full Marks: {fullMarks}</span>
+              </div>
+
+              {loading ? (
+                <div className="p-12 text-center">
+                  <div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
+                </div>
+              ) : students.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">
+                  No students in this class.
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {students.map((st) => {
+                    const currentVal = marksMap[st.id]?.marks_obtained ?? '';
+                    const currentRemarks = marksMap[st.id]?.remarks ?? '';
+                    const currentGrade = currentVal !== '' && !isNaN(Number(currentVal))
+                      ? calculateGrade(Number(currentVal), fullMarks)
+                      : '—';
+
+                    return (
+                      <div
+                        key={st.id}
+                        className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-muted/30 transition-colors"
+                      >
+                        {/* Student Info */}
+                        <div className="flex items-center gap-3 w-full md:w-1/3">
+                          <span className="font-mono text-sm font-bold text-primary w-8 text-center shrink-0">
+                            #{st.roll_number}
+                          </span>
+
+                          {st.avatar_url ? (
+                            <img
+                              src={st.avatar_url}
+                              alt={st.first_name}
+                              className="size-10 rounded-full object-cover border border-primary/20 shrink-0"
+                            />
+                          ) : (
+                            <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-primary font-bold text-sm shrink-0">
+                              {st.first_name.charAt(0)}
+                            </div>
+                          )}
+
+                          <div className="truncate">
+                            <p className="font-bold text-foreground text-sm truncate">
+                              {st.first_name} {st.last_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Roll: #{st.roll_number}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Marks & Remarks Input */}
+                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full md:w-2/3 justify-end">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                              Marks Obtained:
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={fullMarks}
+                              value={currentVal}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setMarksMap((prev) => ({
+                                  ...prev,
+                                  [st.id]: {
+                                    ...prev[st.id],
+                                    marks_obtained: val,
+                                    remarks: prev[st.id]?.remarks || '',
+                                  },
+                                }));
+                              }}
+                              placeholder="0"
+                              className="w-20 rounded-xl border border-input bg-background px-3 py-1.5 text-center text-sm font-bold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                            />
+                            <span className="text-xs text-muted-foreground font-mono">/ {fullMarks}</span>
+                          </div>
+
+                          <div className="w-12 text-center">
+                            <span
+                              className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-extrabold ${
+                                currentGrade !== '—'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : 'bg-muted text-muted-foreground'
+                              }`}
+                            >
+                              {currentGrade}
+                            </span>
+                          </div>
+
+                          <div className="flex-1 min-w-[150px]">
+                            <input
+                              type="text"
+                              value={currentRemarks}
+                              onChange={(e) => {
+                                const rem = e.target.value;
+                                setMarksMap((prev) => ({
+                                  ...prev,
+                                  [st.id]: {
+                                    ...prev[st.id],
+                                    marks_obtained: prev[st.id]?.marks_obtained ?? '',
+                                    remarks: rem,
+                                  },
+                                }));
+                              }}
+                              placeholder="Remarks (e.g. Good progress)"
+                              className="w-full rounded-xl border border-input bg-background px-3 py-1.5 text-xs text-foreground focus:ring-2 focus:ring-primary outline-none"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* EXAM SCHEDULES TAB */}
+        {activeTab === 'exams' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Header & Controls */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <Calendar className="size-5 text-primary" />
+                    Class Examination Timetables & Schedules
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Schedule, edit, or delete exams for your assigned classes. Timetables are visible exclusively to enrolled students.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={openCreateExamModal}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all shrink-0"
+                >
+                  <Plus className="size-4" />
+                  Schedule New Exam
+                </button>
+              </div>
+
+              {/* Class Selector */}
+              <div className="pt-3 border-t border-border/60 flex items-center gap-3">
+                <label className="text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                  Selected Class:
+                </label>
+                <select
+                  value={`${selectedClassId}_${selectedSectionId}`}
+                  onChange={(e) => {
+                    const [cId, sId] = e.target.value.split('_');
+                    setSelectedClassId(cId);
+                    setSelectedSectionId(sId);
+                  }}
+                  className="rounded-xl border border-input bg-background px-3 py-1.5 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  {assignedClasses.map((ac) => (
+                    <option key={`${ac.class_id}_${ac.section_id}`} value={`${ac.class_id}_${ac.section_id}`}>
+                      {ac.class_name} — {ac.section_name}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-muted-foreground font-mono">
+                  ({scheduledExams.length} {scheduledExams.length === 1 ? 'Exam' : 'Exams'} scheduled)
+                </span>
+              </div>
+            </div>
+
+            {/* Exam List */}
+            {scheduledExams.length === 0 ? (
+              <div className="rounded-3xl border border-border bg-card p-12 text-center shadow-soft space-y-4">
+                <div className="size-16 rounded-2xl bg-primary/10 text-primary grid place-items-center mx-auto">
+                  <Calendar className="size-8" />
+                </div>
+                <div className="max-w-md mx-auto space-y-2">
+                  <h4 className="text-base font-bold text-foreground">
+                    No Examination Timetable Scheduled
+                  </h4>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    You have not scheduled any upcoming examinations for this class yet. Click "Schedule New Exam" above to create and publish a timetable.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {scheduledExams.map((exam) => (
+                  <div
+                    key={exam.id}
+                    className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 relative overflow-hidden"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-primary bg-primary/10 px-2.5 py-0.5 rounded-md inline-block mb-1">
+                          {exam.exam_name}
+                        </span>
+                        <h4 className="text-base font-extrabold text-foreground">
+                          {exam.subject}
+                        </h4>
+                        <span className="text-xs text-muted-foreground font-semibold">
+                          Class: {exam.class_name || 'Class'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300/60 px-2.5 py-1 rounded-xl">
+                          {exam.full_marks} Marks
+                        </span>
+
+                        {/* Action Buttons */}
+                        <button
+                          type="button"
+                          onClick={() => openEditExamModal(exam)}
+                          className="size-8 rounded-xl border border-border bg-muted/30 grid place-items-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          title="Edit Exam"
+                        >
+                          <Edit2 className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteExam(exam.id, exam.subject)}
+                          className="size-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
+                          title="Delete Exam"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Date & Time */}
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/60 text-xs">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Calendar className="size-4 text-primary shrink-0" />
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground block">Exam Date</span>
+                          <span className="font-bold text-foreground">{formatDateDDMMYYYY(exam.date)}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Clock className="size-4 text-primary shrink-0" />
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-muted-foreground block">Time & Duration</span>
+                          <span className="font-bold text-foreground">{exam.time} ({exam.duration})</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Optional Room & Instructions */}
+                    {(exam.room_number || exam.instructions) && (
+                      <div className="rounded-2xl bg-muted/40 p-3 space-y-1 text-xs">
+                        {exam.room_number && (
+                          <p className="text-muted-foreground">
+                            Room: <strong className="text-foreground">{exam.room_number}</strong>
+                          </p>
+                        )}
+                        {exam.instructions && (
+                          <p className="text-muted-foreground">
+                            Note: <span className="text-foreground">{exam.instructions}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Creator / Modifier Badges */}
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2 border-t border-border/40">
+                      <span>Scheduled by: <strong className="text-foreground">{exam.created_by_name}</strong></span>
+                      {exam.updated_by_name && (
+                        <span className="text-[10px] text-muted-foreground">Modified: {exam.updated_by_name}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* CREATE / EDIT EXAM MODAL */}
+            {showExamModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+                <div className="w-full max-w-xl rounded-3xl border border-border bg-card p-6 shadow-2xl space-y-5">
+                  <div className="flex items-center justify-between border-b border-border pb-3">
+                    <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                      <Calendar className="size-5 text-primary" />
+                      {editingExam ? 'Edit Examination Schedule' : 'Schedule New Examination'}
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => setShowExamModal(false)}
+                      className="size-8 rounded-xl grid place-items-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveExam} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Class */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Class
+                        </label>
+                        <select
+                          value={examForm.class_id || selectedClassId}
+                          onChange={(e) => setExamForm({ ...examForm, class_id: e.target.value })}
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        >
+                          {assignedClasses.map((ac) => (
+                            <option key={ac.class_id} value={ac.class_id}>
+                              {ac.class_name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Exam Title */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Assessment Title *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={examForm.exam_name}
+                          onChange={(e) => setExamForm({ ...examForm, exam_name: e.target.value })}
+                          placeholder="e.g. 1st Unit Test 2026"
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Subject */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Subject *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={examForm.subject}
+                          onChange={(e) => setExamForm({ ...examForm, subject: e.target.value })}
+                          placeholder="e.g. Mathematics"
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+
+                      {/* Full Marks */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Full Marks *
+                        </label>
+                        <input
+                          type="number"
+                          required
+                          min={10}
+                          max={200}
+                          value={examForm.full_marks}
+                          onChange={(e) => setExamForm({ ...examForm, full_marks: Number(e.target.value) || 100 })}
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      {/* Date */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Date *
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={examForm.date}
+                          onChange={(e) => setExamForm({ ...examForm, date: e.target.value })}
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+
+                      {/* Time */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Start Time *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={examForm.time}
+                          onChange={(e) => setExamForm({ ...examForm, time: e.target.value })}
+                          placeholder="e.g. 10:30 AM"
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+
+                      {/* Duration */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Duration *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={examForm.duration}
+                          onChange={(e) => setExamForm({ ...examForm, duration: e.target.value })}
+                          placeholder="e.g. 2 Hours"
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Room Number */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Room / Hall Number
+                        </label>
+                        <input
+                          type="text"
+                          value={examForm.room_number}
+                          onChange={(e) => setExamForm({ ...examForm, room_number: e.target.value })}
+                          placeholder="e.g. Room 102"
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+
+                      {/* Instructions */}
+                      <div>
+                        <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                          Special Instructions
+                        </label>
+                        <input
+                          type="text"
+                          value={examForm.instructions}
+                          onChange={(e) => setExamForm({ ...examForm, instructions: e.target.value })}
+                          placeholder="e.g. Bring Admit Card"
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                      <button
+                        type="button"
+                        onClick={() => setShowExamModal(false)}
+                        className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingExam}
+                        className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                      >
+                        {savingExam ? (
+                          <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                        ) : (
+                          <Save className="size-4" />
+                        )}
+                        {editingExam ? 'Update Schedule' : 'Publish Exam'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -127,3 +127,65 @@ export interface Notice {
   updated_at?: string;
   author_name?: string;
 }
+
+export interface StudentMark {
+  id: string;
+  student_id: string;
+  class_id: string;
+  section_id: string;
+  exam_name: string;
+  subject: string;
+  full_marks: number;
+  marks_obtained: number;
+  grade?: string;
+  remarks?: string;
+  teacher_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Joined fields
+  student_name?: string;
+  roll_number?: string;
+  class_name?: string;
+  section_name?: string;
+}
+
+export interface ScheduledExam {
+  id: string;
+  exam_name: string;
+  class_id: string;
+  subject: string;
+  date: string;
+  time: string;
+  duration: string;
+  full_marks: number;
+  room_number?: string;
+  instructions?: string;
+  created_by: string;
+  created_by_name: string;
+  updated_by_name?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Joined fields
+  class_name?: string;
+}
+
+export type DayOfWeek = 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday';
+
+export interface ClassTimetableEntry {
+  id: string;
+  class_id: string;
+  day_of_week: DayOfWeek;
+  period_number: number;
+  start_time: string;
+  end_time: string;
+  time_slot?: string;
+  subject: string;
+  teacher_name: string;
+  teacher_id?: string;
+  room_number?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Joined fields
+  class_name?: string;
+}
+

@@ -21,6 +21,7 @@ import { Route as PortalIndexRouteImport } from './routes/portal/index'
 import { Route as PortalAdminRouteImport } from './routes/portal/admin'
 import { Route as PortalLoginRouteImport } from './routes/portal/login'
 import { Route as PortalParentRouteImport } from './routes/portal/parent'
+import { Route as PortalStudentRouteImport } from './routes/portal/student'
 import { Route as PortalTeacherRouteImport } from './routes/portal/teacher'
 
 const IndexRoute = IndexRouteImport.update({
@@ -83,6 +84,11 @@ const PortalParentRoute = PortalParentRouteImport.update({
   path: '/portal/parent',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PortalStudentRoute = PortalStudentRouteImport.update({
+  id: '/portal/student',
+  path: '/portal/student',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PortalTeacherRoute = PortalTeacherRouteImport.update({
   id: '/portal/teacher',
   path: '/portal/teacher',
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/portal/admin': typeof PortalAdminRoute
   '/portal/login': typeof PortalLoginRoute
   '/portal/parent': typeof PortalParentRoute
+  '/portal/student': typeof PortalStudentRoute
   '/portal/teacher': typeof PortalTeacherRoute
   '/portal/': typeof PortalIndexRoute
 }
@@ -116,6 +123,7 @@ export interface FileRoutesByTo {
   '/portal/admin': typeof PortalAdminRoute
   '/portal/login': typeof PortalLoginRoute
   '/portal/parent': typeof PortalParentRoute
+  '/portal/student': typeof PortalStudentRoute
   '/portal/teacher': typeof PortalTeacherRoute
   '/portal': typeof PortalIndexRoute
 }
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/portal/admin': typeof PortalAdminRoute
   '/portal/login': typeof PortalLoginRoute
   '/portal/parent': typeof PortalParentRoute
+  '/portal/student': typeof PortalStudentRoute
   '/portal/teacher': typeof PortalTeacherRoute
   '/portal/': typeof PortalIndexRoute
 }
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
     | '/portal/admin'
     | '/portal/login'
     | '/portal/parent'
+    | '/portal/student'
     | '/portal/teacher'
     | '/portal/'
   fileRoutesByTo: FileRoutesByTo
@@ -164,6 +174,7 @@ export interface FileRouteTypes {
     | '/portal/admin'
     | '/portal/login'
     | '/portal/parent'
+    | '/portal/student'
     | '/portal/teacher'
     | '/portal'
   id:
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/portal/admin'
     | '/portal/login'
     | '/portal/parent'
+    | '/portal/student'
     | '/portal/teacher'
     | '/portal/'
   fileRoutesById: FileRoutesById
@@ -285,6 +297,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PortalParentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/portal/student': {
+      id: '/portal/student'
+      path: '/portal/student'
+      fullPath: '/portal/student'
+      preLoaderRoute: typeof PortalStudentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/portal/teacher': {
       id: '/portal/teacher'
       path: '/portal/teacher'
@@ -307,6 +326,7 @@ const rootRouteChildren: RootRouteChildren = {
   PortalAdminRoute: PortalAdminRoute,
   PortalLoginRoute: PortalLoginRoute,
   PortalParentRoute: PortalParentRoute,
+  PortalStudentRoute: PortalStudentRoute,
   PortalTeacherRoute: PortalTeacherRoute,
   PortalIndexRoute: PortalIndexRoute,
 }

@@ -7,6 +7,10 @@ import type {
   Student,
   AttendanceRecord,
   Notice,
+  StudentMark,
+  ScheduledExam,
+  ClassTimetableEntry,
+  DayOfWeek,
   UserRole,
 } from '../types/portal';
 
@@ -24,6 +28,53 @@ const INITIAL_CLASSES: SchoolClass[] = [
   { id: 'c10', name: 'Class 8' },
   { id: 'c11', name: 'Class 9' },
   { id: 'c12', name: 'Class 10' },
+];
+
+const INITIAL_TIMETABLES: ClassTimetableEntry[] = [
+  // Class 5 (c7) - Monday
+  { id: 'tt-1', class_id: 'c7', day_of_week: 'Monday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-2', class_id: 'c7', day_of_week: 'Monday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
+  { id: 'tt-3', class_id: 'c7', day_of_week: 'Monday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
+  { id: 'tt-4', class_id: 'c7', day_of_week: 'Monday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Science Lab' },
+  { id: 'tt-5', class_id: 'c7', day_of_week: 'Monday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'History & Geography', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-6', class_id: 'c7', day_of_week: 'Monday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Computer & Practical', teacher_name: 'Ranjan Banerjee', room_number: 'Computer Lab' },
+
+  // Class 5 (c7) - Tuesday
+  { id: 'tt-7', class_id: 'c7', day_of_week: 'Tuesday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
+  { id: 'tt-8', class_id: 'c7', day_of_week: 'Tuesday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-9', class_id: 'c7', day_of_week: 'Tuesday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
+  { id: 'tt-10', class_id: 'c7', day_of_week: 'Tuesday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
+  { id: 'tt-11', class_id: 'c7', day_of_week: 'Tuesday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'Physical Education & Yoga', teacher_name: 'Kallol Ghosh', room_number: 'Ground' },
+  { id: 'tt-12', class_id: 'c7', day_of_week: 'Tuesday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Drawing & Crafts', teacher_name: 'Priyanka Das', room_number: 'Art Room' },
+
+  // Class 5 (c7) - Wednesday
+  { id: 'tt-13', class_id: 'c7', day_of_week: 'Wednesday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
+  { id: 'tt-14', class_id: 'c7', day_of_week: 'Wednesday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
+  { id: 'tt-15', class_id: 'c7', day_of_week: 'Wednesday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-16', class_id: 'c7', day_of_week: 'Wednesday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'Computer & Practical', teacher_name: 'Ranjan Banerjee', room_number: 'Computer Lab' },
+  { id: 'tt-17', class_id: 'c7', day_of_week: 'Wednesday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'History & Geography', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-18', class_id: 'c7', day_of_week: 'Wednesday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'General Knowledge & Values', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
+
+  // Class 5 (c7) - Thursday
+  { id: 'tt-19', class_id: 'c7', day_of_week: 'Thursday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-20', class_id: 'c7', day_of_week: 'Thursday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
+  { id: 'tt-21', class_id: 'c7', day_of_week: 'Thursday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
+  { id: 'tt-22', class_id: 'c7', day_of_week: 'Thursday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
+  { id: 'tt-23', class_id: 'c7', day_of_week: 'Thursday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'Environmental Studies', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-24', class_id: 'c7', day_of_week: 'Thursday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Library & Reading', teacher_name: 'Debashis Mukherjee', room_number: 'Library' },
+
+  // Class 5 (c7) - Friday
+  { id: 'tt-25', class_id: 'c7', day_of_week: 'Friday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
+  { id: 'tt-26', class_id: 'c7', day_of_week: 'Friday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
+  { id: 'tt-27', class_id: 'c7', day_of_week: 'Friday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
+  { id: 'tt-28', class_id: 'c7', day_of_week: 'Friday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-29', class_id: 'c7', day_of_week: 'Friday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'History & Geography', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
+  { id: 'tt-30', class_id: 'c7', day_of_week: 'Friday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Moral Education & Prayer', teacher_name: 'Subrata Sen', room_number: 'Prayer Hall' },
+
+  // Class 5 (c7) - Saturday
+  { id: 'tt-31', class_id: 'c7', day_of_week: 'Saturday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Weekly Assessment & Quiz', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
+  { id: 'tt-32', class_id: 'c7', day_of_week: 'Saturday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'Music & Recitation', teacher_name: 'Priyanka Das', room_number: 'Music Room' },
+  { id: 'tt-33', class_id: 'c7', day_of_week: 'Saturday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Games & Sports', teacher_name: 'Kallol Ghosh', room_number: 'Ground' },
 ];
 
 const INITIAL_SECTIONS: Section[] = [
@@ -85,6 +136,9 @@ class PortalStore {
   parentLinks = INITIAL_PARENT_LINKS;
   notices: Notice[] = INITIAL_NOTICES;
   attendance: AttendanceRecord[] = [];
+  marks: StudentMark[] = [];
+  exams: ScheduledExam[] = [];
+  timetables: ClassTimetableEntry[] = INITIAL_TIMETABLES;
 
   constructor() {
     if (typeof window !== 'undefined' && !isSupabaseConfigured) {
@@ -100,6 +154,9 @@ class PortalStore {
           this.parentLinks = parsed.parentLinks || INITIAL_PARENT_LINKS;
           this.notices = parsed.notices && parsed.notices.length > 0 ? parsed.notices : INITIAL_NOTICES;
           this.attendance = parsed.attendance || [];
+          this.marks = parsed.marks || [];
+          this.exams = parsed.exams || [];
+          this.timetables = parsed.timetables && parsed.timetables.length > 0 ? parsed.timetables : INITIAL_TIMETABLES;
         } catch {
           // ignore parsing error
         }
@@ -121,6 +178,9 @@ class PortalStore {
           parentLinks: this.parentLinks,
           notices: this.notices,
           attendance: this.attendance,
+          marks: this.marks,
+          exams: this.exams,
+          timetables: this.timetables,
         })
       );
     }
@@ -948,4 +1008,488 @@ export async function exportAttendanceToExcel(records: AttendanceRecord[], filen
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+// ==========================================
+// STUDENT MARKS & ACADEMIC SERVICES
+// ==========================================
+
+const VALID_STUDENT_MARK_COLUMNS = new Set([
+  'id',
+  'student_id',
+  'class_id',
+  'section_id',
+  'exam_name',
+  'subject',
+  'full_marks',
+  'marks_obtained',
+  'grade',
+  'remarks',
+  'teacher_id',
+  'created_at',
+  'updated_at',
+]);
+
+function sanitizeStudentMarkPayload(obj: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (VALID_STUDENT_MARK_COLUMNS.has(key) && value !== undefined) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+export function calculateGrade(marksObtained: number, fullMarks = 100): string {
+  if (fullMarks <= 0) return 'N/A';
+  const percentage = (marksObtained / fullMarks) * 100;
+  if (percentage >= 90) return 'A+';
+  if (percentage >= 80) return 'A';
+  if (percentage >= 70) return 'B+';
+  if (percentage >= 60) return 'B';
+  if (percentage >= 50) return 'C';
+  if (percentage >= 35) return 'D';
+  return 'F';
+}
+
+export async function fetchStudentMarks(filters: {
+  studentId?: string;
+  classId?: string;
+  sectionId?: string;
+  examName?: string;
+} = {}): Promise<StudentMark[]> {
+  if (isSupabaseConfigured) {
+    let query = supabase.from('student_marks').select('*').order('created_at', { ascending: false });
+    if (filters.studentId) query = query.eq('student_id', filters.studentId);
+    if (filters.classId) query = query.eq('class_id', filters.classId);
+    if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
+    if (filters.examName) query = query.eq('exam_name', filters.examName);
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch marks from Supabase:', error);
+      // If table doesn't exist yet, return empty list gracefully
+      return [];
+    }
+
+    const [students, classes, sections] = await Promise.all([
+      fetchStudents(),
+      fetchClasses(),
+      fetchSections(),
+    ]);
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+    const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
+
+    return (data || []).map((m: any) => {
+      const st = studentMap.get(m.student_id);
+      return {
+        ...m,
+        student_name: st ? `${st.first_name} ${st.last_name}`.trim() : (m.student_name || 'Student'),
+        roll_number: st ? st.roll_number : (m.roll_number || '01'),
+        class_name: classMap.get(m.class_id) || m.class_name || 'Class',
+        section_name: sectionMap.get(m.section_id) || m.section_name || 'Section',
+      };
+    });
+  }
+
+  let result = [...store.marks];
+  if (filters.studentId) result = result.filter((m) => m.student_id === filters.studentId);
+  if (filters.classId) result = result.filter((m) => m.class_id === filters.classId);
+  if (filters.sectionId) result = result.filter((m) => m.section_id === filters.sectionId);
+  if (filters.examName) result = result.filter((m) => m.exam_name === filters.examName);
+  return result;
+}
+
+export async function submitStudentMarksBatch(marks: Omit<StudentMark, 'id' | 'created_at'>[]) {
+  const now = new Date().toISOString();
+  const recordsWithId = marks.map((m) => ({
+    ...m,
+    id: `m-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    grade: m.grade || calculateGrade(Number(m.marks_obtained), Number(m.full_marks || 100)),
+    created_at: now,
+    updated_at: now,
+  }));
+
+  if (isSupabaseConfigured) {
+    const sanitized = recordsWithId.map((m) => sanitizeStudentMarkPayload(m));
+    const { error } = await supabase.from('student_marks').insert(sanitized);
+    if (error) {
+      console.error('[Portal DB] Failed to submit marks to Supabase:', error);
+      throw new Error(error.message || 'Database error: Failed to save student marks.');
+    }
+    return true;
+  }
+
+  // Demo fallback
+  recordsWithId.forEach((rec) => {
+    store.marks.push(rec as any);
+  });
+  store.save();
+  return true;
+}
+
+export async function deleteStudentMark(id: string) {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.from('student_marks').delete().eq('id', id);
+    if (error) {
+      console.error('[Portal DB] Failed to delete mark from Supabase:', error);
+      throw new Error(`Failed to delete mark: ${error.message}`);
+    }
+    return true;
+  }
+  store.marks = store.marks.filter((m) => m.id !== id);
+  store.save();
+  return true;
+}
+
+// ==========================================
+// SCHEDULED EXAMS & TIMETABLE SERVICES
+// ==========================================
+
+const VALID_SCHEDULED_EXAM_COLUMNS = new Set([
+  'id',
+  'exam_name',
+  'class_id',
+  'subject',
+  'date',
+  'time',
+  'duration',
+  'full_marks',
+  'room_number',
+  'instructions',
+  'created_by',
+  'created_by_name',
+  'updated_by_name',
+  'created_at',
+  'updated_at',
+]);
+
+function sanitizeScheduledExamPayload(obj: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (VALID_SCHEDULED_EXAM_COLUMNS.has(key) && value !== undefined) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+export async function fetchScheduledExams(classId?: string): Promise<ScheduledExam[]> {
+  if (isSupabaseConfigured) {
+    let query = supabase
+      .from('scheduled_exams')
+      .select('*')
+      .order('date', { ascending: true })
+      .order('time', { ascending: true });
+
+    if (classId && classId !== 'all') {
+      query = query.eq('class_id', classId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch scheduled exams from Supabase:', error);
+      return [];
+    }
+
+    const classes = await fetchClasses();
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+
+    return (data || []).map((exam: any) => ({
+      ...exam,
+      class_name: classMap.get(exam.class_id) || exam.class_name || 'Class',
+    }));
+  }
+
+  // Demo fallback
+  let list = [...store.exams];
+  if (classId && classId !== 'all') {
+    list = list.filter((e) => e.class_id === classId);
+  }
+  const classes = store.classes;
+  const classMap = new Map(classes.map((c) => [c.id, c.name]));
+  return list
+    .sort((a, b) => (a.date > b.date ? 1 : -1))
+    .map((e) => ({
+      ...e,
+      class_name: classMap.get(e.class_id) || e.class_name || 'Class',
+    }));
+}
+
+export async function addScheduledExam(
+  examData: Omit<ScheduledExam, 'id' | 'created_at' | 'updated_at'>
+): Promise<ScheduledExam> {
+  const now = new Date().toISOString();
+  const newExam: ScheduledExam = {
+    ...examData,
+    id: `ex-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    const sanitized = sanitizeScheduledExamPayload(newExam);
+    const { data, error } = await supabase.from('scheduled_exams').insert([sanitized]).select().single();
+    if (error || !data) {
+      console.error('[Portal DB] Failed to schedule exam in Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to schedule exam.'}`);
+    }
+
+    const classes = await fetchClasses();
+    const cls = classes.find((c) => c.id === data.class_id);
+    return { ...data, class_name: cls?.name || 'Class' };
+  }
+
+  const cls = store.classes.find((c) => c.id === examData.class_id);
+  newExam.class_name = cls?.name || 'Class';
+  store.exams.push(newExam);
+  store.save();
+  return newExam;
+}
+
+export async function updateScheduledExam(
+  id: string,
+  updates: Partial<ScheduledExam>
+): Promise<ScheduledExam> {
+  const now = new Date().toISOString();
+  const fullUpdates = {
+    ...updates,
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    const sanitized = sanitizeScheduledExamPayload(fullUpdates);
+    const { data, error } = await supabase
+      .from('scheduled_exams')
+      .update(sanitized)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      console.error('[Portal DB] Failed to update scheduled exam in Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to update exam.'}`);
+    }
+
+    const classes = await fetchClasses();
+    const cls = classes.find((c) => c.id === data.class_id);
+    return { ...data, class_name: cls?.name || 'Class' };
+  }
+
+  const idx = store.exams.findIndex((e) => e.id === id);
+  if (idx >= 0) {
+    store.exams[idx] = { ...store.exams[idx], ...fullUpdates };
+    const cls = store.classes.find((c) => c.id === store.exams[idx].class_id);
+    store.exams[idx].class_name = cls?.name || 'Class';
+    store.save();
+    return store.exams[idx];
+  }
+  throw new Error('Scheduled exam not found');
+}
+
+export async function deleteScheduledExam(id: string): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.from('scheduled_exams').delete().eq('id', id);
+    if (error) {
+      console.error('[Portal DB] Failed to delete scheduled exam from Supabase:', error);
+      throw new Error(`Failed to delete scheduled exam: ${error.message}`);
+    }
+    return true;
+  }
+  store.exams = store.exams.filter((e) => e.id !== id);
+  store.save();
+  return true;
+}
+
+// ==========================================
+// CLASS TIMETABLE & DAILY ROUTINE SERVICES
+// ==========================================
+
+const VALID_CLASS_TIMETABLE_COLUMNS = new Set([
+  'id',
+  'class_id',
+  'day_of_week',
+  'period_number',
+  'start_time',
+  'end_time',
+  'time_slot',
+  'subject',
+  'teacher_name',
+  'teacher_id',
+  'room_number',
+  'created_at',
+  'updated_at',
+]);
+
+function sanitizeClassTimetablePayload(obj: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (VALID_CLASS_TIMETABLE_COLUMNS.has(key) && value !== undefined) {
+      sanitized[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+const DAY_ORDER: Record<string, number> = {
+  Monday: 1,
+  Tuesday: 2,
+  Wednesday: 3,
+  Thursday: 4,
+  Friday: 5,
+  Saturday: 6,
+};
+
+export async function fetchClassTimetable(
+  classId?: string,
+  dayOfWeek?: string
+): Promise<ClassTimetableEntry[]> {
+  if (isSupabaseConfigured) {
+    let query = supabase
+      .from('class_timetables')
+      .select('*')
+      .order('period_number', { ascending: true })
+      .order('start_time', { ascending: true });
+
+    if (classId && classId !== 'all') {
+      query = query.eq('class_id', classId);
+    }
+    if (dayOfWeek && dayOfWeek !== 'all') {
+      query = query.eq('day_of_week', dayOfWeek);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch class timetables from Supabase:', error);
+      return [];
+    }
+
+    const classes = await fetchClasses();
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+
+    return (data || [])
+      .sort((a: any, b: any) => {
+        const dA = DAY_ORDER[a.day_of_week] || 0;
+        const dB = DAY_ORDER[b.day_of_week] || 0;
+        if (dA !== dB) return dA - dB;
+        return (Number(a.period_number) || 0) - (Number(b.period_number) || 0);
+      })
+      .map((entry: any) => ({
+        ...entry,
+        class_name: classMap.get(entry.class_id) || entry.class_name || 'Class',
+      }));
+  }
+
+  // Demo fallback
+  let list = [...store.timetables];
+  if (classId && classId !== 'all') {
+    list = list.filter((e) => e.class_id === classId);
+  }
+  if (dayOfWeek && dayOfWeek !== 'all') {
+    list = list.filter((e) => e.day_of_week === dayOfWeek);
+  }
+
+  const classes = store.classes;
+  const classMap = new Map(classes.map((c) => [c.id, c.name]));
+
+  return list
+    .sort((a, b) => {
+      const dA = DAY_ORDER[a.day_of_week] || 0;
+      const dB = DAY_ORDER[b.day_of_week] || 0;
+      if (dA !== dB) return dA - dB;
+      return (Number(a.period_number) || 0) - (Number(b.period_number) || 0);
+    })
+    .map((e) => ({
+      ...e,
+      class_name: classMap.get(e.class_id) || e.class_name || 'Class',
+    }));
+}
+
+export async function addClassTimetableEntry(
+  entryData: Omit<ClassTimetableEntry, 'id' | 'created_at' | 'updated_at'>
+): Promise<ClassTimetableEntry> {
+  const now = new Date().toISOString();
+  const timeSlot = entryData.time_slot || `${entryData.start_time} - ${entryData.end_time}`;
+  const newEntry: ClassTimetableEntry = {
+    ...entryData,
+    time_slot: timeSlot,
+    id: `tt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    const sanitized = sanitizeClassTimetablePayload(newEntry);
+    const { data, error } = await supabase.from('class_timetables').insert([sanitized]).select().single();
+    if (error || !data) {
+      console.error('[Portal DB] Failed to create timetable entry in Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to add timetable entry.'}`);
+    }
+
+    const classes = await fetchClasses();
+    const cls = classes.find((c) => c.id === data.class_id);
+    return { ...data, class_name: cls?.name || 'Class' };
+  }
+
+  const cls = store.classes.find((c) => c.id === entryData.class_id);
+  newEntry.class_name = cls?.name || 'Class';
+  store.timetables.push(newEntry);
+  store.save();
+  return newEntry;
+}
+
+export async function updateClassTimetableEntry(
+  id: string,
+  updates: Partial<ClassTimetableEntry>
+): Promise<ClassTimetableEntry> {
+  const now = new Date().toISOString();
+  const fullUpdates = {
+    ...updates,
+    time_slot: updates.start_time && updates.end_time ? `${updates.start_time} - ${updates.end_time}` : updates.time_slot,
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    const sanitized = sanitizeClassTimetablePayload(fullUpdates);
+    const { data, error } = await supabase
+      .from('class_timetables')
+      .update(sanitized)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      console.error('[Portal DB] Failed to update timetable entry in Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to update timetable entry.'}`);
+    }
+
+    const classes = await fetchClasses();
+    const cls = classes.find((c) => c.id === data.class_id);
+    return { ...data, class_name: cls?.name || 'Class' };
+  }
+
+  const idx = store.timetables.findIndex((e) => e.id === id);
+  if (idx >= 0) {
+    store.timetables[idx] = { ...store.timetables[idx], ...fullUpdates };
+    const cls = store.classes.find((c) => c.id === store.timetables[idx].class_id);
+    store.timetables[idx].class_name = cls?.name || 'Class';
+    store.save();
+    return store.timetables[idx];
+  }
+  throw new Error('Timetable entry not found');
+}
+
+export async function deleteClassTimetableEntry(id: string): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.from('class_timetables').delete().eq('id', id);
+    if (error) {
+      console.error('[Portal DB] Failed to delete timetable entry from Supabase:', error);
+      throw new Error(`Failed to delete timetable entry: ${error.message}`);
+    }
+    return true;
+  }
+  store.timetables = store.timetables.filter((e) => e.id !== id);
+  store.save();
+  return true;
 }
