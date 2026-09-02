@@ -141,9 +141,9 @@ function StudentDashboardPage() {
         // Fetch school notices
         const nots = await fetchNotices('parent');
         setNotices(nots);
-      } catch (err) {
-        console.error(err);
-        toast.error('Failed to load student portal info');
+      } catch (err: any) {
+        console.error('[Student/Parent Dashboard] Load error:', err);
+        toast.error(err?.message || 'Failed to load student portal info');
       } finally {
         setLoading(false);
       }

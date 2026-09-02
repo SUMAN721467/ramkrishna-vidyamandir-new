@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { fetchProfiles, fetchStudents, store, addProfile, generateDefaultPassword } from '../lib/portal-db';
-import type { Profile, UserRole } from '../types/portal';
+import type { Profile, Student, UserRole } from '../types/portal';
 
 interface AuthContextType {
   user: { id: string; email: string } | null;
@@ -27,40 +27,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         let restored = false;
 
-        if (isSupabaseConfigured) {
-          try {
-            const { data } = await supabase.auth.getSession();
-            if (data.session?.user) {
-              setUser({ id: data.session.user.id, email: data.session.user.email || '' });
-              await loadProfile(data.session.user.id, data.session.user.email || '');
-              restored = true;
-            }
-          } catch (e) {
-            console.warn('Supabase getSession error:', e);
-          }
-
-          const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
-            if (session?.user) {
-              setUser({ id: session.user.id, email: session.user.email || '' });
-              await loadProfile(session.user.id, session.user.email || '');
-            } else if (event === 'SIGNED_OUT') {
-              setUser(null);
-              setProfile(null);
-              localStorage.removeItem('rkvm_demo_user');
-            }
-          });
-        }
-
-        // Check local stored persistent user if not already restored by Supabase
-        if (!restored && typeof window !== 'undefined') {
-          const savedDemoUser = localStorage.getItem('rkvm_demo_user');
-          if (savedDemoUser) {
+        // Check local stored persistent active session
+        if (typeof window !== 'undefined') {
+          const savedSession = localStorage.getItem('rkvm_demo_user');
+          if (savedSession) {
             try {
-              const p: Profile = JSON.parse(savedDemoUser);
+              const p: Profile = JSON.parse(savedSession);
               if (p && p.id) {
                 setUser({ id: p.id, email: p.email });
                 setProfile(p);
                 restored = true;
+
+                // If Supabase is configured, refresh the latest profile from DB in background
+                if (isSupabaseConfigured) {
+                  loadProfile(p.id, p.email).catch((e) => {
+                    console.warn('[Auth] Background profile refresh error:', e);
+                  });
+                }
               }
             } catch {
               // fallback
@@ -68,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
       } catch (err) {
-        console.error('Error initializing auth:', err);
+        console.error('[Auth] Error initializing session:', err);
       } finally {
         setLoading(false);
       }
@@ -78,10 +61,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function loadProfile(userId: string, email: string) {
-    const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || import.meta.env.ADMIN_EMAILS || 'rkvmschool.in@gmail.com')
+    const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || 'rkvmschool.in@gmail.com')
       .split(',')
       .map((e: string) => e.trim().toLowerCase());
     const isDesignatedAdmin = adminEmails.includes(email.toLowerCase());
+
+    if (isDesignatedAdmin) {
+      const adminProf: Profile = {
+        id: userId || 'u-admin-rkvm',
+        email: email || 'rkvmschool.in@gmail.com',
+        full_name: 'RKVM School Administrator',
+        role: 'admin',
+      };
+      setProfile(adminProf);
+      localStorage.setItem('rkvm_demo_user', JSON.stringify(adminProf));
+      return;
+    }
 
     if (isSupabaseConfigured) {
       try {
@@ -92,37 +87,81 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .single();
 
         if (!error && data) {
-          // Enforce Admin role for rkvmschool.in@gmail.com
           const finalRole = isDesignatedAdmin ? 'admin' : data.role;
           const fullProf = { ...data, role: finalRole };
           setProfile(fullProf);
           localStorage.setItem('rkvm_demo_user', JSON.stringify(fullProf));
           return;
         }
+
+        // Check students table if not found in profiles
+        const { data: stData, error: stError } = await supabase
+          .from('students')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (!stError && stData) {
+          const studentProf: Profile = {
+            id: stData.id,
+            email: stData.email || email,
+            full_name: `${stData.first_name} ${stData.last_name}`.trim(),
+            phone: stData.phone,
+            role: 'parent',
+            avatar_url: stData.avatar_url,
+            pending_avatar_url: stData.pending_avatar_url,
+            pending_avatar_status: stData.pending_avatar_status,
+          };
+          setProfile(studentProf);
+          localStorage.setItem('rkvm_demo_user', JSON.stringify(studentProf));
+          return;
+        }
       } catch (e) {
-        console.warn('Supabase loadProfile fallback:', e);
+        console.warn('[Auth] Supabase loadProfile error:', e);
       }
     }
 
-    // Fallback search profile by email or ID in store
-    const profiles = await fetchProfiles();
-    const found = profiles.find((p) => p.id === userId || p.email.toLowerCase() === email.toLowerCase());
-    if (found) {
-      const finalRole = isDesignatedAdmin ? 'admin' : found.role;
-      const fullProf = { ...found, role: finalRole };
-      setProfile(fullProf);
-      localStorage.setItem('rkvm_demo_user', JSON.stringify(fullProf));
-    } else {
-      const finalRole: UserRole = isDesignatedAdmin ? 'admin' : 'parent';
-      const fallbackProf: Profile = {
-        id: userId,
-        email,
-        full_name: email.split('@')[0],
-        role: finalRole,
-      };
-      setProfile(fallbackProf);
-      localStorage.setItem('rkvm_demo_user', JSON.stringify(fallbackProf));
+    // Fallback search profile by email or ID
+    try {
+      const [profiles, students] = await Promise.all([fetchProfiles(), fetchStudents()]);
+      const foundProf = profiles.find((p) => p.id === userId || p.email.toLowerCase() === email.toLowerCase());
+      if (foundProf) {
+        const finalRole = isDesignatedAdmin ? 'admin' : foundProf.role;
+        const fullProf = { ...foundProf, role: finalRole };
+        setProfile(fullProf);
+        localStorage.setItem('rkvm_demo_user', JSON.stringify(fullProf));
+        return;
+      }
+
+      const foundStudent = students.find((s) => s.id === userId || (s.email && s.email.toLowerCase() === email.toLowerCase()));
+      if (foundStudent) {
+        const studentProf: Profile = {
+          id: foundStudent.id,
+          email: foundStudent.email || email,
+          full_name: `${foundStudent.first_name} ${foundStudent.last_name}`.trim(),
+          phone: foundStudent.phone,
+          role: 'parent',
+          avatar_url: foundStudent.avatar_url,
+          pending_avatar_url: foundStudent.pending_avatar_url,
+          pending_avatar_status: foundStudent.pending_avatar_status,
+        };
+        setProfile(studentProf);
+        localStorage.setItem('rkvm_demo_user', JSON.stringify(studentProf));
+        return;
+      }
+    } catch (fetchErr) {
+      console.warn('[Auth] Fallback profile fetch error:', fetchErr);
     }
+
+    const finalRole: UserRole = isDesignatedAdmin ? 'admin' : 'parent';
+    const fallbackProf: Profile = {
+      id: userId,
+      email,
+      full_name: email.split('@')[0],
+      role: finalRole,
+    };
+    setProfile(fallbackProf);
+    localStorage.setItem('rkvm_demo_user', JSON.stringify(fallbackProf));
   }
 
   const signIn = async (identifier: string, pass: string) => {
@@ -142,55 +181,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
       };
 
-      const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || import.meta.env.ADMIN_EMAILS || 'rkvmschool.in@gmail.com')
+      const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || 'rkvmschool.in@gmail.com')
         .split(',')
         .map((e: string) => e.trim().toLowerCase());
       const isDesignatedAdmin = adminEmails.includes(cleanInput) || cleanPhoneDigits === '9732640068';
-
-      // Supabase authentication if configured
-      if (isSupabaseConfigured) {
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: cleanInput,
-            password: pass,
-          });
-
-          if (data?.user) {
-            setUser({ id: data.user.id, email: data.user.email || '' });
-            const profiles = await fetchProfiles();
-            const prof = profiles.find((p) => p.id === data.user.id || p.email.toLowerCase() === cleanInput);
-            const role: UserRole = isDesignatedAdmin ? 'admin' : prof?.role || 'parent';
-            const userProfile: Profile = prof
-              ? { ...prof, role }
-              : { id: data.user.id, email: cleanInput, full_name: cleanInput.split('@')[0], role };
-            setProfile(userProfile);
-            localStorage.setItem('rkvm_demo_user', JSON.stringify(userProfile));
-            setLoading(false);
-            return { success: true, role };
-          }
-        } catch (sbErr) {
-          console.warn('Supabase auth attempt error:', sbErr);
-        }
-      }
-
-      // User & Student Authentication matching (Mobile Number or Email only, not Roll Number)
-      const profiles = await fetchProfiles();
-      const dbStudents = await fetchStudents();
-
-      // Combine DB and local students uniquely by ID
-      const allStudentsMap = new Map<string, Student>();
-      dbStudents.forEach((s) => allStudentsMap.set(s.id, s));
-      store.students.forEach((s) => allStudentsMap.set(s.id, s));
-      const allAvailableStudents = Array.from(allStudentsMap.values());
-
-      // Candidate students matching Mobile Number or Email (Roll Number is explicitly disallowed)
-      const candidateStudents = allAvailableStudents.filter(
-        (s) => (s.email && s.email.toLowerCase() === cleanInput) || isPhoneMatch(s.phone)
-      );
-
-      const matchedProfile = profiles.find(
-        (p) => p.email.toLowerCase() === cleanInput || isPhoneMatch(p.phone)
-      );
 
       // Designated Admin Check
       if (isDesignatedAdmin) {
@@ -210,6 +204,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
         return { success: true, role: 'admin' };
       }
+
+      // Fetch latest profiles and students (from Supabase in production, or store in demo)
+      const profiles = await fetchProfiles();
+      const dbStudents = await fetchStudents();
+
+      const candidateStudents = dbStudents.filter(
+        (s) => (s.email && s.email.toLowerCase() === cleanInput) || isPhoneMatch(s.phone)
+      );
+
+      const matchedProfile = profiles.find(
+        (p) => p.email.toLowerCase() === cleanInput || isPhoneMatch(p.phone)
+      );
 
       // Teacher / Staff Profile Check
       if (matchedProfile) {
@@ -236,8 +242,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const studentProfile: Profile = {
             id: matchedStudent.id,
             email: matchedStudent.email || cleanInput,
-            full_name: `${matchedStudent.first_name} ${matchedStudent.last_name}`,
+            full_name: `${matchedStudent.first_name} ${matchedStudent.last_name}`.trim(),
             role: 'parent',
+            phone: matchedStudent.phone,
+            avatar_url: matchedStudent.avatar_url,
+            pending_avatar_url: matchedStudent.pending_avatar_url,
+            pending_avatar_status: matchedStudent.pending_avatar_status,
+            portal_password: matchedStudent.portal_password,
           };
 
           setUser({ id: studentProfile.id, email: studentProfile.email });
@@ -247,7 +258,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return { success: true, role: 'parent' };
         }
 
-        // If candidates were found for this phone/email but no password matched
         setLoading(false);
         if (candidateStudents.length > 1) {
           const names = candidateStudents.map((s) => s.first_name).join(', ');
@@ -283,42 +293,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const assignedRole: UserRole = cleanEmail === 'rkvmschool.in@gmail.com' ? 'admin' : requestedRole;
 
     try {
-      if (isSupabaseConfigured) {
-        const { data, error } = await supabase.auth.signUp({
-          email: cleanEmail,
-          password: pass,
-          options: {
-            data: {
-              full_name: fullName,
-              role: assignedRole,
-            },
-          },
-        });
-
-        if (error) {
-          setLoading(false);
-          return { success: false, error: error.message };
-        }
-
-        if (data.user) {
-          setUser({ id: data.user.id, email: cleanEmail });
-          const newProf: Profile = {
-            id: data.user.id,
-            email: cleanEmail,
-            full_name: fullName,
-            role: assignedRole,
-          };
-          setProfile(newProf);
-          setLoading(false);
-          return { success: true, role: assignedRole };
-        }
-      }
-
-      // Local / Fallback Sign Up
       const newProf = await addProfile({
         email: cleanEmail,
         full_name: fullName,
         role: assignedRole,
+        portal_password: pass,
       });
 
       setUser({ id: newProf.id, email: newProf.email });
@@ -339,7 +318,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await supabase.auth.signOut();
       }
     } catch (e) {
-      console.error(e);
+      console.error('[Auth] Sign out error:', e);
     }
     setUser(null);
     setProfile(null);

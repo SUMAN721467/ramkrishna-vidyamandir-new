@@ -5,12 +5,9 @@ import type {
   SchoolClass,
   Section,
   Student,
-  Teacher,
-  Parent,
   AttendanceRecord,
   Notice,
   UserRole,
-  AttendanceStatus,
 } from '../types/portal';
 
 // Initial Mock Seed Data for Instant Local Testing / Fallback
@@ -62,9 +59,7 @@ const INITIAL_PROFILES: Profile[] = [
 ];
 
 const INITIAL_STUDENTS: Student[] = [];
-
 const INITIAL_TEACHER_ASSIGNMENTS: any[] = [];
-
 const INITIAL_PARENT_LINKS: any[] = [];
 
 const INITIAL_NOTICES: Notice[] = [
@@ -80,12 +75,7 @@ const INITIAL_NOTICES: Notice[] = [
   },
 ];
 
-// Initial attendance records (Blank until attendance is taken)
-function generateInitialAttendance(): AttendanceRecord[] {
-  return [];
-}
-
-// Local Storage sync for demo mode persistence
+// Local Storage sync for demo/offline development mode ONLY
 class PortalStore {
   classes: SchoolClass[] = INITIAL_CLASSES;
   sections: Section[] = INITIAL_SECTIONS;
@@ -94,10 +84,10 @@ class PortalStore {
   teacherAssignments = INITIAL_TEACHER_ASSIGNMENTS;
   parentLinks = INITIAL_PARENT_LINKS;
   notices: Notice[] = INITIAL_NOTICES;
-  attendance: AttendanceRecord[] = generateInitialAttendance();
+  attendance: AttendanceRecord[] = [];
 
   constructor() {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !isSupabaseConfigured) {
       const saved = localStorage.getItem('rkvm_portal_store');
       if (saved) {
         try {
@@ -118,7 +108,8 @@ class PortalStore {
   }
 
   save() {
-    if (typeof window !== 'undefined') {
+    // ONLY persist in localStorage when Supabase is NOT configured (Demo mode)
+    if (typeof window !== 'undefined' && !isSupabaseConfigured) {
       localStorage.setItem(
         'rkvm_portal_store',
         JSON.stringify({
@@ -145,7 +136,11 @@ export const store = new PortalStore();
 export async function fetchClasses(): Promise<SchoolClass[]> {
   if (isSupabaseConfigured) {
     const { data, error } = await supabase.from('classes').select('*').order('name');
-    if (!error && data) return data;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch classes from Supabase:', error);
+      throw new Error(`Failed to load classes: ${error.message}`);
+    }
+    return data || [];
   }
   return store.classes;
 }
@@ -155,7 +150,11 @@ export async function fetchSections(classId?: string): Promise<Section[]> {
     let query = supabase.from('sections').select('*');
     if (classId) query = query.eq('class_id', classId);
     const { data, error } = await query;
-    if (!error && data) return data;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch sections from Supabase:', error);
+      throw new Error(`Failed to load sections: ${error.message}`);
+    }
+    return data || [];
   }
   if (classId) {
     return store.sections.filter((s) => s.class_id === classId);
@@ -165,14 +164,14 @@ export async function fetchSections(classId?: string): Promise<Section[]> {
 
 export async function fetchProfiles(role?: UserRole): Promise<Profile[]> {
   if (isSupabaseConfigured) {
-    try {
-      let query = supabase.from('profiles').select('*');
-      if (role) query = query.eq('role', role);
-      const { data, error } = await query;
-      if (!error && data) return data;
-    } catch (e) {
-      console.warn('Supabase fetchProfiles fallback:', e);
+    let query = supabase.from('profiles').select('*');
+    if (role) query = query.eq('role', role);
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch profiles from Supabase:', error);
+      throw new Error(`Failed to load user profiles: ${error.message}`);
     }
+    return data || [];
   }
   if (role) {
     return store.profiles.filter((p) => p.role === role);
@@ -182,26 +181,31 @@ export async function fetchProfiles(role?: UserRole): Promise<Profile[]> {
 
 export async function fetchStudents(classId?: string, sectionId?: string): Promise<Student[]> {
   if (isSupabaseConfigured) {
-    try {
-      let query = supabase
-        .from('students')
-        .select('*, classes(name), sections(name)')
-        .order('roll_number');
+    let query = supabase
+      .from('students')
+      .select('*')
+      .order('roll_number');
 
-      if (classId) query = query.eq('class_id', classId);
-      if (sectionId) query = query.eq('section_id', sectionId);
+    if (classId) query = query.eq('class_id', classId);
+    if (sectionId) query = query.eq('section_id', sectionId);
 
-      const { data, error } = await query;
-      if (!error && data) {
-        return data.map((st: any) => ({
-          ...st,
-          class_name: st.classes?.name,
-          section_name: st.sections?.name,
-        }));
-      }
-    } catch (e) {
-      console.warn('Supabase fetchStudents fallback:', e);
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch students from Supabase:', error);
+      throw new Error(`Failed to load students: ${error.message}`);
     }
+
+    const [classes, sections] = await Promise.all([fetchClasses(), fetchSections()]);
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+    const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
+
+    const enriched: Student[] = (data || []).map((st: any) => ({
+      ...st,
+      class_name: classMap.get(st.class_id) || st.class_name || 'Class',
+      section_name: sectionMap.get(st.section_id) || st.section_name || 'Section',
+    }));
+
+    return enriched;
   }
 
   let result = store.students;
@@ -212,23 +216,38 @@ export async function fetchStudents(classId?: string, sectionId?: string): Promi
 
 export async function fetchTeacherClasses(teacherId: string) {
   if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase
-        .from('teacher_classes')
-        .select('*, classes(name), sections(name)')
-        .eq('teacher_id', teacherId);
+    const { data, error } = await supabase
+      .from('teacher_classes')
+      .select('*')
+      .eq('teacher_id', teacherId);
 
-      if (!error && data) {
-        return data.map((tc: any) => ({
-          class_id: tc.class_id,
-          section_id: tc.section_id,
-          class_name: tc.classes?.name,
-          section_name: tc.sections?.name,
-        }));
-      }
-    } catch (e) {
-      console.warn('Supabase fetchTeacherClasses error:', e);
+    if (error) {
+      console.error('[Portal DB] Failed to fetch teacher classes from Supabase:', error);
+      throw new Error(`Failed to load teacher classes: ${error.message}`);
     }
+
+    const [classes, sections] = await Promise.all([fetchClasses(), fetchSections()]);
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+    const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
+
+    if (data && data.length > 0) {
+      return data.map((tc: any) => ({
+        class_id: tc.class_id,
+        section_id: tc.section_id,
+        class_name: classMap.get(tc.class_id) || 'Class',
+        section_name: sectionMap.get(tc.section_id) || 'Section',
+      }));
+    }
+
+    // Fallback: If no specific teacher assignments exist, allow teacher to select any school class
+    return classes.flatMap((cls) =>
+      sections.map((sec) => ({
+        class_id: cls.id,
+        section_id: sec.id,
+        class_name: cls.name,
+        section_name: sec.name,
+      }))
+    );
   }
 
   const assignments = store.teacherAssignments.filter((ta) => ta.teacher_id === teacherId);
@@ -245,7 +264,6 @@ export async function fetchTeacherClasses(teacherId: string) {
     });
   }
 
-  // Fallback: If no specific teacher assignments exist, allow teacher to select any school class
   return store.classes.flatMap((cls) =>
     store.sections.map((sec) => ({
       class_id: cls.id,
@@ -258,22 +276,34 @@ export async function fetchTeacherClasses(teacherId: string) {
 
 export async function fetchParentChildren(parentId: string): Promise<Student[]> {
   if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase
-        .from('parent_students')
-        .select('student_id, students(*, classes(name), sections(name))')
-        .eq('parent_id', parentId);
+    const { data, error } = await supabase
+      .from('parent_students')
+      .select('*')
+      .eq('parent_id', parentId);
 
-      if (!error && data) {
-        return data.map((item: any) => ({
-          ...item.students,
-          class_name: item.students?.classes?.name,
-          section_name: item.students?.sections?.name,
-        }));
-      }
-    } catch (e) {
-      console.warn('Supabase fetchParentChildren error:', e);
+    if (error) {
+      console.error('[Portal DB] Failed to fetch parent student links from Supabase:', error);
+      throw new Error(`Failed to load linked children: ${error.message}`);
     }
+
+    const allStudents = await fetchStudents();
+
+    if (data && data.length > 0) {
+      const studentIds = data.map((item: any) => item.student_id);
+      const matched = allStudents.filter((st) => studentIds.includes(st.id));
+      if (matched.length > 0) return matched;
+    }
+
+    // Direct match: check if parentId is student ID or matching phone/email
+    const directMatch = allStudents.filter(
+      (st) =>
+        st.id === parentId ||
+        (st.phone && st.phone.replace(/\D/g, '') === parentId.replace(/\D/g, '')) ||
+        (st.email && st.email.toLowerCase() === parentId.toLowerCase())
+    );
+    if (directMatch.length > 0) return directMatch;
+
+    return allStudents;
   }
 
   const links = store.parentLinks.filter((pl) => pl.parent_id === parentId);
@@ -293,33 +323,46 @@ export async function fetchAttendance(filters: {
   studentId?: string;
 }): Promise<AttendanceRecord[]> {
   if (isSupabaseConfigured) {
-    try {
-      let query = supabase
-        .from('attendance')
-        .select('*, students(first_name, last_name, roll_number), classes(name), sections(name), profiles(full_name)')
-        .order('date', { ascending: false });
+    let query = supabase
+      .from('attendance')
+      .select('*')
+      .order('date', { ascending: false });
 
-      if (filters.date) query = query.eq('date', filters.date);
-      if (filters.startDate) query = query.gte('date', filters.startDate);
-      if (filters.endDate) query = query.lte('date', filters.endDate);
-      if (filters.classId) query = query.eq('class_id', filters.classId);
-      if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
-      if (filters.studentId) query = query.eq('student_id', filters.studentId);
+    if (filters.date) query = query.eq('date', filters.date);
+    if (filters.startDate) query = query.gte('date', filters.startDate);
+    if (filters.endDate) query = query.lte('date', filters.endDate);
+    if (filters.classId) query = query.eq('class_id', filters.classId);
+    if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
+    if (filters.studentId) query = query.eq('student_id', filters.studentId);
 
-      const { data, error } = await query;
-      if (!error && data) {
-        return data.map((att: any) => ({
-          ...att,
-          student_name: `${att.students?.first_name || ''} ${att.students?.last_name || ''}`.trim(),
-          roll_number: att.students?.roll_number,
-          class_name: att.classes?.name,
-          section_name: att.sections?.name,
-          marked_by_name: att.profiles?.full_name,
-        }));
-      }
-    } catch (e) {
-      console.warn('Supabase fetchAttendance error:', e);
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Portal DB] Failed to fetch attendance from Supabase:', error);
+      throw new Error(`Failed to load attendance records: ${error.message}`);
     }
+
+    const [students, classes, sections, profiles] = await Promise.all([
+      fetchStudents(),
+      fetchClasses(),
+      fetchSections(),
+      fetchProfiles(),
+    ]);
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+    const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
+    const profileMap = new Map(profiles.map((p) => [p.id, p.full_name]));
+
+    return (data || []).map((att: any) => {
+      const st = studentMap.get(att.student_id);
+      return {
+        ...att,
+        student_name: st ? `${st.first_name} ${st.last_name}`.trim() : (att.student_name || 'Student'),
+        roll_number: st ? st.roll_number : (att.roll_number || '01'),
+        class_name: classMap.get(att.class_id) || att.class_name || 'Class',
+        section_name: sectionMap.get(att.section_id) || att.section_name || 'Section',
+        marked_by_name: profileMap.get(att.marked_by) || att.marked_by_name || 'Class Teacher',
+      };
+    });
   }
 
   let result = [...store.attendance];
@@ -350,7 +393,20 @@ export async function fetchAttendance(filters: {
 }
 
 export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id' | 'created_at'>[]) {
-  // Always update local store first for instant UI response and persistence
+  if (isSupabaseConfigured) {
+    const { error } = await supabase
+      .from('attendance')
+      .upsert(records, { onConflict: 'student_id,date' });
+
+    if (error) {
+      console.error('[Portal DB] Failed to submit attendance to Supabase:', error);
+      throw new Error(error.message || 'Database error: Failed to save attendance to Supabase.');
+    }
+
+    return true;
+  }
+
+  // Offline / Demo fallback
   records.forEach((newRec) => {
     const idx = store.attendance.findIndex(
       (a) => a.student_id === newRec.student_id && a.date === newRec.date
@@ -368,24 +424,16 @@ export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id'
   });
 
   store.save();
-
-  if (isSupabaseConfigured) {
-    const { error } = await supabase
-      .from('attendance')
-      .upsert(records, { onConflict: 'student_id,date' });
-
-    if (error) {
-      throw new Error(error.message || 'Database error: Failed to save attendance.');
-    }
-  }
-
   return true;
 }
 
 export async function deleteAttendanceRecord(id: string) {
   if (isSupabaseConfigured) {
     const { error } = await supabase.from('attendance').delete().eq('id', id);
-    if (error) throw error;
+    if (error) {
+      console.error('[Portal DB] Failed to delete attendance record from Supabase:', error);
+      throw new Error(`Failed to delete attendance: ${error.message}`);
+    }
     return true;
   }
   store.attendance = store.attendance.filter((a) => a.id !== id);
@@ -398,34 +446,22 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
     ? `${studentData.phone.replace(/\D/g, '')}@rkvmschool.in`
     : (studentData.email || `${studentData.first_name.toLowerCase().replace(/\s+/g, '')}.st@rkvmschool.in`);
   const generatedPassword = studentData.portal_password || generateDefaultPassword(studentData.first_name, studentData.date_of_birth);
+  const now = new Date().toISOString();
 
-  // Generate sequential Student ID: rkvm-s1, rkvm-s2, rkvm-s3...
-  const existingStudents = await fetchStudents();
-  const allList = [...existingStudents, ...store.students];
-  let maxNum = 0;
-  allList.forEach((s) => {
-    const match = s.id?.match(/rkvm-s(\d+)/i);
-    if (match) {
-      const n = parseInt(match[1], 10);
-      if (n > maxNum) maxNum = n;
-    }
-  });
-  const newStudentId = `rkvm-s${maxNum + 1}`;
+  // Generate collision-free unique Student ID
+  const uniqueSuffix = Math.random().toString(36).substring(2, 7);
+  const newStudentId = `st-${Date.now()}-${uniqueSuffix}`;
 
   const newStudent: Student = {
     ...studentData,
     id: newStudentId,
     email: generatedEmail,
     portal_password: generatedPassword,
-    created_at: new Date().toISOString(),
+    created_at: now,
+    updated_at: now,
   };
 
-  const cls = store.classes.find((c) => c.id === studentData.class_id);
-  const sec = store.sections.find((s) => s.id === studentData.section_id);
-  newStudent.class_name = cls?.name;
-  newStudent.section_name = sec?.name;
-
-  // Sync profile for student portal authentication
+  // Student Profile for portal authentication
   const studentProfile: Profile = {
     id: newStudent.id,
     email: generatedEmail,
@@ -433,28 +469,47 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
     phone: studentData.phone,
     role: 'parent',
     portal_password: generatedPassword,
+    avatar_url: studentData.avatar_url,
+    created_at: now,
+    updated_at: now,
   };
-  const pIdx = store.profiles.findIndex((p) => p.email.toLowerCase() === generatedEmail.toLowerCase() || p.id === newStudent.id);
-  if (pIdx >= 0) store.profiles[pIdx] = studentProfile;
-  else store.profiles.push(studentProfile);
 
   if (isSupabaseConfigured) {
     // Strip non-table properties before inserting
-    const dbPayload = { ...newStudent };
+    const dbPayload: any = { ...newStudent };
     delete dbPayload.class_name;
     delete dbPayload.section_name;
     
     const { data, error } = await supabase.from('students').insert([dbPayload]).select().single();
     if (error || !data) {
-      throw new Error(error?.message || 'Database connection error: Failed to enroll student.');
+      console.error('[Portal DB] Failed to insert student in Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to enroll student.'}`);
+    }
+
+    // Also sync the profile in Supabase profiles table for unified multi-device login
+    try {
+      await supabase.from('profiles').upsert([studentProfile], { onConflict: 'id' });
+    } catch (profErr) {
+      console.warn('[Portal DB] Profile sync warning for student:', profErr);
     }
     
-    // Merge the joined properties back for the UI
-    const completeStudent = { ...data, class_name: cls?.name, section_name: sec?.name };
-    store.students.push(completeStudent);
-    store.save();
-    return completeStudent;
+    const classes = await fetchClasses();
+    const sections = await fetchSections();
+    const cls = classes.find((c) => c.id === data.class_id);
+    const sec = sections.find((s) => s.id === data.section_id);
+
+    return { ...data, class_name: cls?.name, section_name: sec?.name };
   }
+
+  // Offline / Demo fallback
+  const cls = store.classes.find((c) => c.id === studentData.class_id);
+  const sec = store.sections.find((s) => s.id === studentData.section_id);
+  newStudent.class_name = cls?.name;
+  newStudent.section_name = sec?.name;
+
+  const pIdx = store.profiles.findIndex((p) => p.email.toLowerCase() === generatedEmail.toLowerCase() || p.id === newStudent.id);
+  if (pIdx >= 0) store.profiles[pIdx] = studentProfile;
+  else store.profiles.push(studentProfile);
 
   store.students.push(newStudent);
   store.save();
@@ -463,14 +518,48 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
 
 export async function updateStudent(id: string, updates: Partial<Student>): Promise<Student> {
   if (isSupabaseConfigured) {
-    const dbPayload = { ...updates };
+    const dbPayload: any = { ...updates };
     delete dbPayload.class_name;
     delete dbPayload.section_name;
+    dbPayload.updated_at = new Date().toISOString();
     
     const { data, error } = await supabase.from('students').update(dbPayload).eq('id', id).select().single();
-    if (!error && data) return data;
+    if (error || !data) {
+      console.error('[Portal DB] Failed to update student in Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to update student.'}`);
+    }
+
+    // Also keep profiles table in Supabase in sync
+    try {
+      const profileUpdates: Partial<Profile> = {
+        updated_at: new Date().toISOString(),
+      };
+      if (updates.first_name || updates.last_name) {
+        profileUpdates.full_name = `${updates.first_name || ''} ${updates.last_name || ''}`.trim();
+      }
+      if (updates.phone !== undefined) profileUpdates.phone = updates.phone;
+      if (updates.email !== undefined) profileUpdates.email = updates.email;
+      if (updates.portal_password !== undefined) profileUpdates.portal_password = updates.portal_password;
+      if (updates.avatar_url !== undefined) profileUpdates.avatar_url = updates.avatar_url;
+      if (updates.pending_avatar_url !== undefined) profileUpdates.pending_avatar_url = updates.pending_avatar_url;
+      if (updates.pending_avatar_status !== undefined) profileUpdates.pending_avatar_status = updates.pending_avatar_status;
+      if (updates.pending_avatar_requested_at !== undefined) profileUpdates.pending_avatar_requested_at = updates.pending_avatar_requested_at;
+
+      if (Object.keys(profileUpdates).length > 1) {
+        await supabase.from('profiles').update(profileUpdates).eq('id', id);
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Profile sync on student update warning:', e);
+    }
+
+    const classes = await fetchClasses();
+    const sections = await fetchSections();
+    const cls = classes.find((c) => c.id === data.class_id);
+    const sec = sections.find((s) => s.id === data.section_id);
+    return { ...data, class_name: cls?.name, section_name: sec?.name };
   }
 
+  // Offline / Demo fallback
   const idx = store.students.findIndex((s) => s.id === id);
   if (idx >= 0) {
     store.students[idx] = { ...store.students[idx], ...updates };
@@ -479,10 +568,12 @@ export async function updateStudent(id: string, updates: Partial<Student>): Prom
     store.students[idx].class_name = cls?.name;
     store.students[idx].section_name = sec?.name;
 
-    // Keep profile email / password / phone / avatar synced
+    // Keep profile synced
     const pIdx = store.profiles.findIndex((p) => p.id === id || p.email.toLowerCase() === store.students[idx].email?.toLowerCase());
     if (pIdx >= 0) {
-      store.profiles[pIdx].full_name = store.students[idx].first_name;
+      if (updates.first_name || updates.last_name) {
+        store.profiles[pIdx].full_name = `${store.students[idx].first_name} ${store.students[idx].last_name}`.trim();
+      }
       if (updates.phone) store.profiles[pIdx].phone = updates.phone;
       if (updates.portal_password) store.profiles[pIdx].portal_password = updates.portal_password;
       if (updates.avatar_url !== undefined) store.profiles[pIdx].avatar_url = updates.avatar_url;
@@ -506,31 +597,46 @@ export async function requestStudentPhotoChange(studentId: string, photoUrl: str
 }
 
 export async function approveStudentPhotoChange(studentId: string): Promise<Student> {
-  const st = store.students.find((s) => s.id === studentId);
+  const allStudents = await fetchStudents();
+  const st = allStudents.find((s) => s.id === studentId);
   if (!st || !st.pending_avatar_url) throw new Error('No pending photo found for this student');
 
-  const updates: Partial<Student> = {
+  const updates: any = {
     avatar_url: st.pending_avatar_url,
-    pending_avatar_url: undefined,
+    pending_avatar_url: null,
     pending_avatar_status: 'approved',
-    pending_avatar_requested_at: undefined,
+    pending_avatar_requested_at: null,
   };
   return updateStudent(studentId, updates);
 }
 
 export async function rejectStudentPhotoChange(studentId: string): Promise<Student> {
-  const updates: Partial<Student> = {
-    pending_avatar_url: undefined,
+  const updates: any = {
+    pending_avatar_url: null,
     pending_avatar_status: 'rejected',
-    pending_avatar_requested_at: undefined,
+    pending_avatar_requested_at: null,
   };
   return updateStudent(studentId, updates);
 }
 
 export async function deleteStudent(id: string): Promise<boolean> {
   if (isSupabaseConfigured) {
-    await supabase.from('students').delete().eq('id', id);
+    const results = await Promise.all([
+      supabase.from('students').delete().eq('id', id),
+      supabase.from('profiles').delete().eq('id', id),
+      supabase.from('attendance').delete().eq('student_id', id),
+      supabase.from('parent_students').delete().eq('student_id', id),
+    ]);
+
+    const failed = results.find((r) => r.error);
+    if (failed && failed.error) {
+      console.error('[Portal DB] Failed to delete student from Supabase:', failed.error);
+      throw new Error(`Failed to remove student: ${failed.error.message}`);
+    }
+    return true;
   }
+
+  // Offline / Demo fallback
   store.students = store.students.filter((s) => s.id !== id);
   store.profiles = store.profiles.filter((p) => p.id !== id);
   store.attendance = store.attendance.filter((a) => a.student_id !== id);
@@ -540,50 +646,53 @@ export async function deleteStudent(id: string): Promise<boolean> {
 
 export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>): Promise<Profile> {
   const generatedPassword = profileData.portal_password || generateDefaultPassword(profileData.full_name, '2011');
-  
-  // Generate sequential Teacher ID: rkvm-t1, rkvm-t2, rkvm-t3...
-  let newId: string;
-  if (profileData.role === 'teacher') {
-    const existingProfiles = await fetchProfiles('teacher');
-    const allProfs = [...existingProfiles, ...store.profiles.filter((p) => p.role === 'teacher')];
-    let maxNum = 0;
-    allProfs.forEach((p) => {
-      const match = p.id?.match(/rkvm-t(\d+)/i);
-      if (match) {
-        const n = parseInt(match[1], 10);
-        if (n > maxNum) maxNum = n;
-      }
-    });
-    newId = `rkvm-t${maxNum + 1}`;
-  } else {
-    newId = `u-${profileData.role}-${Date.now()}`;
-  }
+  const now = new Date().toISOString();
+
+  // Generate collision-free unique Profile ID
+  const uniqueSuffix = Math.random().toString(36).substring(2, 7);
+  const newId = profileData.role === 'teacher'
+    ? `t-${Date.now()}-${uniqueSuffix}`
+    : `u-${profileData.role}-${Date.now()}-${uniqueSuffix}`;
 
   const newProf: Profile = {
     ...profileData,
     id: newId,
     portal_password: generatedPassword,
-    created_at: new Date().toISOString(),
+    created_at: now,
+    updated_at: now,
   };
 
   if (isSupabaseConfigured) {
     const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
     if (error || !data) {
-      throw new Error(error?.message || 'Database connection error: Failed to add teacher profile.');
+      console.error('[Portal DB] Failed to add profile to Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to create profile.'}`);
     }
-    store.profiles.push(data);
-    store.save();
     return data;
   }
 
+  // Offline / Demo fallback
   store.profiles.push(newProf);
   store.save();
   return newProf;
 }
 
 export async function updateUserPassword(targetId: string, newPassword: string): Promise<boolean> {
-  let updated = false;
+  if (isSupabaseConfigured) {
+    const now = new Date().toISOString();
+    const results = await Promise.allSettled([
+      supabase.from('students').update({ portal_password: newPassword, updated_at: now }).eq('id', targetId),
+      supabase.from('profiles').update({ portal_password: newPassword, updated_at: now }).eq('id', targetId),
+    ]);
 
+    const hasSuccess = results.some((r) => r.status === 'fulfilled');
+    if (!hasSuccess) {
+      throw new Error('Failed to update password in database.');
+    }
+    return true;
+  }
+
+  let updated = false;
   const pIdx = store.profiles.findIndex((p) => p.id === targetId || p.email.toLowerCase() === targetId.toLowerCase());
   if (pIdx >= 0) {
     store.profiles[pIdx].portal_password = newPassword;
@@ -604,9 +713,14 @@ export async function updateUserPassword(targetId: string, newPassword: string):
 
 export async function linkParentToStudent(parentId: string, studentId: string, relationship = 'Parent/Guardian') {
   if (isSupabaseConfigured) {
-    await supabase.from('parent_students').insert([{ parent_id: parentId, student_id: studentId, relationship }]);
+    const { error } = await supabase.from('parent_students').insert([{ parent_id: parentId, student_id: studentId, relationship }]);
+    if (error) {
+      console.error('[Portal DB] Failed to link parent to student in Supabase:', error);
+      throw new Error(`Failed to link parent to student: ${error.message}`);
+    }
     return;
   }
+
   const exists = store.parentLinks.some((l) => l.parent_id === parentId && l.student_id === studentId);
   if (!exists) {
     store.parentLinks.push({
@@ -621,9 +735,14 @@ export async function linkParentToStudent(parentId: string, studentId: string, r
 
 export async function assignTeacherToClass(teacherId: string, classId: string, sectionId: string) {
   if (isSupabaseConfigured) {
-    await supabase.from('teacher_classes').insert([{ teacher_id: teacherId, class_id: classId, section_id: sectionId }]);
+    const { error } = await supabase.from('teacher_classes').insert([{ teacher_id: teacherId, class_id: classId, section_id: sectionId }]);
+    if (error) {
+      console.error('[Portal DB] Failed to assign teacher to class in Supabase:', error);
+      throw new Error(`Failed to assign teacher to class: ${error.message}`);
+    }
     return;
   }
+
   const exists = store.teacherAssignments.some(
     (a) => a.teacher_id === teacherId && a.class_id === classId && a.section_id === sectionId
   );
@@ -642,16 +761,28 @@ export async function fetchNotices(role?: UserRole): Promise<Notice[]> {
   if (isSupabaseConfigured) {
     const { data, error } = await supabase
       .from('notices')
-      .select('*, profiles(full_name)')
+      .select('*')
       .order('is_pinned', { ascending: false })
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
-      return data.map((n: any) => ({
-        ...n,
-        author_name: n.profiles?.full_name || 'Admin',
-      }));
+    if (error) {
+      console.error('[Portal DB] Failed to fetch notices from Supabase:', error);
+      throw new Error(`Failed to load notices: ${error.message}`);
     }
+
+    const profiles = await fetchProfiles();
+    const profMap = new Map(profiles.map((p) => [p.id, p.full_name]));
+
+    let list: Notice[] = (data || []).map((n: any) => ({
+      ...n,
+      author_name: profMap.get(n.created_by) || n.author_name || 'Admin',
+    }));
+
+    if (role && role !== 'admin') {
+      list = list.filter((n: any) => n.target_role === 'all' || n.target_role === role);
+    }
+
+    return list;
   }
 
   if (role && role !== 'admin') {
@@ -661,16 +792,20 @@ export async function fetchNotices(role?: UserRole): Promise<Notice[]> {
 }
 
 export async function addNotice(noticeData: Omit<Notice, 'id' | 'created_at'>): Promise<Notice> {
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('notices').insert([noticeData]).select().single();
+    if (error || !data) {
+      console.error('[Portal DB] Failed to add notice to Supabase:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to create notice.'}`);
+    }
+    return data;
+  }
+
   const newNotice: Notice = {
     ...noticeData,
     id: `n-${Date.now()}`,
     created_at: new Date().toISOString(),
   };
-
-  if (isSupabaseConfigured) {
-    const { data, error } = await supabase.from('notices').insert([noticeData]).select().single();
-    if (!error && data) return data;
-  }
 
   store.notices.unshift(newNotice);
   store.save();
@@ -679,7 +814,11 @@ export async function addNotice(noticeData: Omit<Notice, 'id' | 'created_at'>): 
 
 export async function deleteNotice(id: string) {
   if (isSupabaseConfigured) {
-    await supabase.from('notices').delete().eq('id', id);
+    const { error } = await supabase.from('notices').delete().eq('id', id);
+    if (error) {
+      console.error('[Portal DB] Failed to delete notice from Supabase:', error);
+      throw new Error(`Failed to delete notice: ${error.message}`);
+    }
     return;
   }
   store.notices = store.notices.filter((n) => n.id !== id);

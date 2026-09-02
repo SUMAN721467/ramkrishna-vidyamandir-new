@@ -58,7 +58,7 @@ export async function compressImage(file: File, maxDimension = 400, quality = 0.
 
 /**
  * Uploads a profile photo to Supabase Storage bucket 'avatars'.
- * Returns the public URL or data URI.
+ * Returns the public URL (or data URI in demo mode).
  */
 export async function uploadProfilePhoto(file: File, pathFolder = 'students'): Promise<string> {
   try {
@@ -66,31 +66,30 @@ export async function uploadProfilePhoto(file: File, pathFolder = 'students'): P
     const fileName = `${pathFolder}/${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
 
     if (isSupabaseConfigured) {
-      try {
-        const { data, error } = await supabase.storage
-          .from('avatars')
-          .upload(fileName, compressedBlob, {
-            contentType: 'image/jpeg',
-            upsert: true,
-          });
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, compressedBlob, {
+          contentType: 'image/jpeg',
+          upsert: true,
+        });
 
-        if (!error && data) {
-          const { data: publicUrlData } = supabase.storage.from('avatars').getPublicUrl(data.path);
-          return publicUrlData.publicUrl;
-        }
-      } catch (e) {
-        console.warn('Supabase storage upload failed, falling back to data URL:', e);
+      if (error || !data) {
+        console.error('[Storage Error] Failed to upload image to Supabase:', error);
+        throw new Error(`Failed to upload photo: ${error?.message || 'Storage error'}`);
       }
+
+      const { data: publicUrlData } = supabase.storage.from('avatars').getPublicUrl(data.path);
+      return publicUrlData.publicUrl;
     }
 
-    // Fallback: return Data URL so images always display reliably in all environments
+    // Local Demo Mode Fallback: return Data URL so images display in offline testing
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result as string);
       reader.readAsDataURL(compressedBlob);
     });
   } catch (err) {
-    console.error('Error uploading photo:', err);
+    console.error('[Storage Error] Error uploading photo:', err);
     throw err;
   }
 }

@@ -55,7 +55,6 @@ import {
   deleteNotice,
   approveStudentPhotoChange,
   rejectStudentPhotoChange,
-  store,
   generateDefaultPassword,
   updateUserPassword,
 } from '../../lib/portal-db';
@@ -213,9 +212,9 @@ function AdminDashboardPage() {
       if (st.length > 0) {
         setParentForm((prev) => ({ ...prev, linked_student_id: st[0].id }));
       }
-    } catch (err) {
-      console.error(err);
-      toast.error('Failed to load portal data');
+    } catch (err: any) {
+      console.error('[Admin Dashboard] Failed to load portal data:', err);
+      toast.error(err?.message || 'Failed to load portal data');
     } finally {
       setLoading(false);
     }

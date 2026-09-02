@@ -87,9 +87,9 @@ function TeacherDashboardPage() {
 
         const nots = await fetchNotices('teacher');
         setNotices(nots);
-      } catch (err) {
-        console.error(err);
-        toast.error('Failed to load teacher class assignments');
+      } catch (err: any) {
+        console.error('[Teacher Dashboard] Class load error:', err);
+        toast.error(err?.message || 'Failed to load teacher class assignments');
       } finally {
         setLoading(false);
       }
@@ -122,9 +122,9 @@ function TeacherDashboardPage() {
           newMap[st.id] = match ? match.status : 'present'; // Default Present
         });
         setAttendanceMap(newMap);
-      } catch (err) {
-        console.error(err);
-        toast.error('Error loading class attendance sheet');
+      } catch (err: any) {
+        console.error('[Teacher Dashboard] Class data error:', err);
+        toast.error(err?.message || 'Error loading class attendance sheet');
       } finally {
         setLoading(false);
       }

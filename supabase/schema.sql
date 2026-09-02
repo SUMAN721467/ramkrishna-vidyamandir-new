@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS public.students (
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     phone TEXT,
+    alt_phone TEXT,
     email TEXT,
     date_of_birth DATE,
     gender TEXT,
@@ -70,10 +71,21 @@ CREATE TABLE IF NOT EXISTS public.students (
     avatar_url TEXT,
     pending_avatar_url TEXT,
     pending_avatar_status TEXT,
+    pending_avatar_requested_at TIMESTAMPTZ,
     status public.student_status NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure alt_phone and pending_avatar columns exist if table was already created
+DO $$ BEGIN
+    ALTER TABLE public.students ADD COLUMN IF NOT EXISTS alt_phone TEXT;
+    ALTER TABLE public.students ADD COLUMN IF NOT EXISTS pending_avatar_requested_at TIMESTAMPTZ;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pending_avatar_url TEXT;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pending_avatar_status TEXT;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pending_avatar_requested_at TIMESTAMPTZ;
+EXCEPTION WHEN others THEN null;
+END $$;
 
 -- 6. Teacher Classes Table
 CREATE TABLE IF NOT EXISTS public.teacher_classes (
