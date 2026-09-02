@@ -59,6 +59,7 @@ import {
   generateDefaultPassword,
   updateUserPassword,
 } from '../../lib/portal-db';
+import { formatDateDDMMYYYY } from '../../lib/format';
 import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
 import type {
@@ -854,7 +855,7 @@ function AdminDashboardPage() {
                             </p>
 
                             <p className="text-xs text-muted-foreground">
-                              Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong> • Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • System ID: <span className="font-mono">{st.id}</span>
+                              Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong> • DOB: <strong className="text-foreground">{formatDateDDMMYYYY(st.date_of_birth) || 'N/A'}</strong> • Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • System ID: <span className="font-mono">{st.id}</span>
                             </p>
                           </div>
                         </div>
@@ -1127,7 +1128,7 @@ function AdminDashboardPage() {
                               ) : (
                                 studentAtt.map((att) => (
                                   <tr key={att.id} className="hover:bg-muted/30 transition-colors">
-                                    <td className="px-4 py-3 font-mono font-bold text-foreground">{att.date}</td>
+                                    <td className="px-4 py-3 font-mono font-bold text-foreground">{formatDateDDMMYYYY(att.date)}</td>
                                     <td className="px-4 py-3">
                                       <span
                                         className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
@@ -1255,7 +1256,9 @@ function AdminDashboardPage() {
                                   <p className="font-bold text-foreground">
                                     {st.first_name} {st.last_name}
                                   </p>
-                                  <p className="text-[11px] text-muted-foreground">Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong></p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong> • DOB: <strong className="text-foreground">{formatDateDDMMYYYY(st.date_of_birth) || 'N/A'}</strong>
+                                  </p>
                                 </div>
                               </td>
                               <td className="px-6 py-4 font-mono font-bold text-primary">#{st.roll_number}</td>
@@ -1523,7 +1526,7 @@ function AdminDashboardPage() {
                     ) : (
                       filteredAttendance.map((rec) => (
                         <tr key={rec.id} className="hover:bg-muted/30 transition-colors">
-                          <td className="px-6 py-4 font-mono text-xs font-bold text-foreground">{rec.date}</td>
+                          <td className="px-6 py-4 font-mono text-xs font-bold text-foreground">{formatDateDDMMYYYY(rec.date)}</td>
                           <td className="px-6 py-4 font-bold text-foreground">{rec.student_name || 'Anirban Das'}</td>
                           <td className="px-6 py-4 text-xs text-muted-foreground">{rec.class_name || 'Class 5'}</td>
                           <td className="px-6 py-4 text-xs text-muted-foreground">{rec.section_name || 'Section A'}</td>
@@ -1606,7 +1609,7 @@ function AdminDashboardPage() {
                   <p className="text-xs text-muted-foreground leading-relaxed">{n.content}</p>
                   <div className="pt-2 border-t border-border/60 text-[11px] text-muted-foreground flex justify-between">
                     <span>By: {n.author_name || 'Headmaster'}</span>
-                    <span>{new Date(n.created_at).toLocaleDateString()}</span>
+                    <span>{formatDateDDMMYYYY(n.created_at)}</span>
                   </div>
                 </div>
               ))}

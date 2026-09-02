@@ -32,6 +32,7 @@ import {
   rejectStudentPhotoChange,
   updateStudent,
 } from '../../lib/portal-db';
+import { formatDateDDMMYYYY } from '../../lib/format';
 import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
 import type { Student, AttendanceRecord, Notice } from '../../types/portal';
@@ -70,6 +71,12 @@ function StudentDashboardPage() {
   // Attendance history & notices
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceRecord[]>([]);
   const [notices, setNotices] = useState<Notice[]>([]);
+
+  // Derived Attendance Stats
+  const totalDays = attendanceHistory.length;
+  const presentDays = attendanceHistory.filter((a) => a.status === 'present' || a.status === 'late').length;
+  const absentDays = attendanceHistory.filter((a) => a.status === 'absent').length;
+  const attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 100;
 
   // Protected route check
   useEffect(() => {
@@ -214,11 +221,6 @@ function StudentDashboardPage() {
     }
   };
 
-  // Calculate attendance stats
-  const totalDays = attendanceHistory.length;
-  const presentDays = attendanceHistory.filter((a) => a.status === 'present').length;
-  const attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 92;
-
   if (authLoading || (loading && !activeStudent)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
@@ -309,7 +311,7 @@ function StudentDashboardPage() {
                 <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                   <span>Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong></span>
                   <span>•</span>
-                  <span>Date of Birth: <strong className="text-foreground">{st.date_of_birth || '2014-05-12'}</strong></span>
+                  <span>Date of Birth: <strong className="text-foreground">{formatDateDDMMYYYY(st.date_of_birth) || '12-05-2014'}</strong></span>
                   <span>•</span>
                   <button
                     type="button"
@@ -555,17 +557,17 @@ function StudentDashboardPage() {
 
               <div className="rounded-2xl bg-muted/40 p-4 text-center">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase block">Total Logged Days</span>
-                <span className="text-2xl font-bold text-foreground">{totalDays || 15}</span>
+                <span className="text-2xl font-bold text-foreground">{totalDays}</span>
               </div>
 
               <div className="rounded-2xl bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 p-4 text-center">
                 <span className="text-[10px] font-bold uppercase block">Days Present</span>
-                <span className="text-2xl font-bold">{presentDays || 14}</span>
+                <span className="text-2xl font-bold">{presentDays}</span>
               </div>
 
               <div className="rounded-2xl bg-rose-50 text-rose-900 dark:bg-rose-950/40 dark:text-rose-300 p-4 text-center">
                 <span className="text-[10px] font-bold uppercase block">Days Absent</span>
-                <span className="text-2xl font-bold">{absentDays || 1}</span>
+                <span className="text-2xl font-bold">{absentDays}</span>
               </div>
             </div>
 
@@ -581,34 +583,15 @@ function StudentDashboardPage() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {attendanceHistory.length === 0 ? (
-                    [
-                      { date: '2026-08-31', status: 'present', marked: 'Smt. Sunita Mukhopadhyay' },
-                      { date: '2026-08-30', status: 'present', marked: 'Smt. Sunita Mukhopadhyay' },
-                      { date: '2026-08-29', status: 'present', marked: 'Smt. Sunita Mukhopadhyay' },
-                      { date: '2026-08-28', status: 'present', marked: 'Smt. Sunita Mukhopadhyay' },
-                      { date: '2026-08-27', status: 'absent', marked: 'Smt. Sunita Mukhopadhyay' },
-                    ].map((att, idx) => (
-                      <tr key={idx} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-3 font-mono font-bold text-foreground">{att.date}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
-                              att.status === 'present'
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                                : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                            }`}
-                          >
-                            {att.status === 'present' ? <CheckCircle2 className="size-3.5" /> : <XCircle className="size-3.5" />}
-                            {att.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">{att.marked}</td>
-                      </tr>
-                    ))
+                    <tr>
+                      <td colSpan={3} className="px-4 py-8 text-center text-xs text-muted-foreground font-medium">
+                        No attendance records logged yet for this student.
+                      </td>
+                    </tr>
                   ) : (
                     attendanceHistory.map((att) => (
                       <tr key={att.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-3 font-mono font-bold text-foreground">{att.date}</td>
+                        <td className="px-4 py-3 font-mono font-bold text-foreground">{formatDateDDMMYYYY(att.date)}</td>
                         <td className="px-4 py-3">
                           <span
                             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
@@ -645,7 +628,7 @@ function StudentDashboardPage() {
                   <h4 className="font-bold text-foreground text-sm">{n.title}</h4>
                   <p className="text-xs text-muted-foreground leading-relaxed">{n.content}</p>
                   <p className="text-[10px] font-semibold text-primary pt-1">
-                    Posted on: {new Date(n.created_at).toLocaleDateString()}
+                    Posted on: {formatDateDDMMYYYY(n.created_at)}
                   </p>
                 </div>
               ))}

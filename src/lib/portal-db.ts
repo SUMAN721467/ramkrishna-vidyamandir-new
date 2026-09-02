@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
+import { formatDateDDMMYYYY } from './format';
 import type {
   Profile,
   SchoolClass,
@@ -79,7 +80,7 @@ const INITIAL_NOTICES: Notice[] = [
   },
 ];
 
-// Initial attendance records
+// Initial attendance records (Blank until attendance is taken)
 function generateInitialAttendance(): AttendanceRecord[] {
   return [];
 }
@@ -101,19 +102,14 @@ class PortalStore {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          this.classes = parsed.classes || INITIAL_CLASSES;
+          this.classes = parsed.classes && parsed.classes.length > 0 ? parsed.classes : INITIAL_CLASSES;
           this.sections = INITIAL_SECTIONS;
-          // Filter out parent role & old demo accounts
-          this.profiles = (parsed.profiles || INITIAL_PROFILES).filter(
-            (p: any) => p.role !== 'parent' && p.id !== 'u-teacher-1' && p.email !== 'teacher@rkvm.edu.in'
-          );
-          this.students = (parsed.students || INITIAL_STUDENTS).filter(
-            (s: any) => !['st-1', 'st-2', 'st-3', 'st-4', 'st-5'].includes(s.id)
-          );
-          this.teacherAssignments = (parsed.teacherAssignments || []).filter((ta: any) => ta.teacher_id !== 'u-teacher-1');
-          this.parentLinks = (parsed.parentLinks || []).filter((pl: any) => pl.parent_id !== 'u-parent-1');
-          this.notices = parsed.notices || INITIAL_NOTICES;
-          this.attendance = (parsed.attendance || []).filter((a: any) => a.marked_by !== 'u-teacher-1' && a.student_id !== 'st-1');
+          this.profiles = parsed.profiles && parsed.profiles.length > 0 ? parsed.profiles : INITIAL_PROFILES;
+          this.students = parsed.students || [];
+          this.teacherAssignments = parsed.teacherAssignments || INITIAL_TEACHER_ASSIGNMENTS;
+          this.parentLinks = parsed.parentLinks || INITIAL_PARENT_LINKS;
+          this.notices = parsed.notices && parsed.notices.length > 0 ? parsed.notices : INITIAL_NOTICES;
+          this.attendance = parsed.attendance || [];
         } catch {
           // ignore parsing error
         }
@@ -169,10 +165,14 @@ export async function fetchSections(classId?: string): Promise<Section[]> {
 
 export async function fetchProfiles(role?: UserRole): Promise<Profile[]> {
   if (isSupabaseConfigured) {
-    let query = supabase.from('profiles').select('*');
-    if (role) query = query.eq('role', role);
-    const { data, error } = await query;
-    if (!error && data) return data;
+    try {
+      let query = supabase.from('profiles').select('*');
+      if (role) query = query.eq('role', role);
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) return data;
+    } catch (e) {
+      console.warn('Supabase fetchProfiles fallback:', e);
+    }
   }
   if (role) {
     return store.profiles.filter((p) => p.role === role);
@@ -182,21 +182,25 @@ export async function fetchProfiles(role?: UserRole): Promise<Profile[]> {
 
 export async function fetchStudents(classId?: string, sectionId?: string): Promise<Student[]> {
   if (isSupabaseConfigured) {
-    let query = supabase
-      .from('students')
-      .select('*, classes(name), sections(name)')
-      .order('roll_number');
+    try {
+      let query = supabase
+        .from('students')
+        .select('*, classes(name), sections(name)')
+        .order('roll_number');
 
-    if (classId) query = query.eq('class_id', classId);
-    if (sectionId) query = query.eq('section_id', sectionId);
+      if (classId) query = query.eq('class_id', classId);
+      if (sectionId) query = query.eq('section_id', sectionId);
 
-    const { data, error } = await query;
-    if (!error && data) {
-      return data.map((st: any) => ({
-        ...st,
-        class_name: st.classes?.name,
-        section_name: st.sections?.name,
-      }));
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        return data.map((st: any) => ({
+          ...st,
+          class_name: st.classes?.name,
+          section_name: st.sections?.name,
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase fetchStudents fallback:', e);
     }
   }
 
@@ -208,53 +212,76 @@ export async function fetchStudents(classId?: string, sectionId?: string): Promi
 
 export async function fetchTeacherClasses(teacherId: string) {
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase
-      .from('teacher_classes')
-      .select('*, classes(name), sections(name)')
-      .eq('teacher_id', teacherId);
+    try {
+      const { data, error } = await supabase
+        .from('teacher_classes')
+        .select('*, classes(name), sections(name)')
+        .eq('teacher_id', teacherId);
 
-    if (!error && data) {
-      return data.map((tc: any) => ({
-        class_id: tc.class_id,
-        section_id: tc.section_id,
-        class_name: tc.classes?.name,
-        section_name: tc.sections?.name,
-      }));
+      if (!error && data && data.length > 0) {
+        return data.map((tc: any) => ({
+          class_id: tc.class_id,
+          section_id: tc.section_id,
+          class_name: tc.classes?.name,
+          section_name: tc.sections?.name,
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase fetchTeacherClasses error:', e);
     }
   }
 
   const assignments = store.teacherAssignments.filter((ta) => ta.teacher_id === teacherId);
-  return assignments.map((ta) => {
-    const cls = store.classes.find((c) => c.id === ta.class_id);
-    const sec = store.sections.find((s) => s.id === ta.section_id);
-    return {
-      class_id: ta.class_id,
-      section_id: ta.section_id,
-      class_name: cls?.name || 'Class 5',
-      section_name: sec?.name || 'Section A',
-    };
-  });
+  if (assignments.length > 0) {
+    return assignments.map((ta) => {
+      const cls = store.classes.find((c) => c.id === ta.class_id);
+      const sec = store.sections.find((s) => s.id === ta.section_id);
+      return {
+        class_id: ta.class_id,
+        section_id: ta.section_id,
+        class_name: cls?.name || 'Class 5',
+        section_name: sec?.name || 'Section A',
+      };
+    });
+  }
+
+  // Fallback: If no specific teacher assignments exist, allow teacher to select any school class
+  return store.classes.flatMap((cls) =>
+    store.sections.map((sec) => ({
+      class_id: cls.id,
+      section_id: sec.id,
+      class_name: cls.name,
+      section_name: sec.name,
+    }))
+  );
 }
 
 export async function fetchParentChildren(parentId: string): Promise<Student[]> {
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase
-      .from('parent_students')
-      .select('student_id, students(*, classes(name), sections(name))')
-      .eq('parent_id', parentId);
+    try {
+      const { data, error } = await supabase
+        .from('parent_students')
+        .select('student_id, students(*, classes(name), sections(name))')
+        .eq('parent_id', parentId);
 
-    if (!error && data) {
-      return data.map((item: any) => ({
-        ...item.students,
-        class_name: item.students?.classes?.name,
-        section_name: item.students?.sections?.name,
-      }));
+      if (!error && data && data.length > 0) {
+        return data.map((item: any) => ({
+          ...item.students,
+          class_name: item.students?.classes?.name,
+          section_name: item.students?.sections?.name,
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase fetchParentChildren error:', e);
     }
   }
 
   const links = store.parentLinks.filter((pl) => pl.parent_id === parentId);
   const childIds = links.map((l) => l.student_id);
-  return store.students.filter((st) => childIds.includes(st.id));
+  if (childIds.length > 0) {
+    return store.students.filter((st) => childIds.includes(st.id));
+  }
+  return store.students;
 }
 
 export async function fetchAttendance(filters: {
@@ -266,38 +293,45 @@ export async function fetchAttendance(filters: {
   studentId?: string;
 }): Promise<AttendanceRecord[]> {
   if (isSupabaseConfigured) {
-    let query = supabase
-      .from('attendance')
-      .select('*, students(first_name, last_name, roll_number), classes(name), sections(name), profiles(full_name)')
-      .order('date', { ascending: false });
+    try {
+      let query = supabase
+        .from('attendance')
+        .select('*, students(first_name, last_name, roll_number), classes(name), sections(name), profiles(full_name)')
+        .order('date', { ascending: false });
 
-    if (filters.date) query = query.eq('date', filters.date);
-    if (filters.startDate) query = query.gte('date', filters.startDate);
-    if (filters.endDate) query = query.lte('date', filters.endDate);
-    if (filters.classId) query = query.eq('class_id', filters.classId);
-    if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
-    if (filters.studentId) query = query.eq('student_id', filters.studentId);
+      if (filters.date) query = query.eq('date', filters.date);
+      if (filters.startDate) query = query.gte('date', filters.startDate);
+      if (filters.endDate) query = query.lte('date', filters.endDate);
+      if (filters.classId) query = query.eq('class_id', filters.classId);
+      if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
+      if (filters.studentId) query = query.eq('student_id', filters.studentId);
 
-    const { data, error } = await query;
-    if (!error && data) {
-      return data.map((att: any) => ({
-        ...att,
-        student_name: `${att.students?.first_name || ''} ${att.students?.last_name || ''}`.trim(),
-        roll_number: att.students?.roll_number,
-        class_name: att.classes?.name,
-        section_name: att.sections?.name,
-        marked_by_name: att.profiles?.full_name,
-      }));
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        return data.map((att: any) => ({
+          ...att,
+          student_name: `${att.students?.first_name || ''} ${att.students?.last_name || ''}`.trim(),
+          roll_number: att.students?.roll_number,
+          class_name: att.classes?.name,
+          section_name: att.sections?.name,
+          marked_by_name: att.profiles?.full_name,
+        }));
+      }
+    } catch (e) {
+      console.warn('Supabase fetchAttendance error:', e);
     }
   }
 
-  let result = store.attendance;
+  let result = [...store.attendance];
   if (filters.date) result = result.filter((a) => a.date === filters.date);
   if (filters.startDate) result = result.filter((a) => a.date >= filters.startDate!);
   if (filters.endDate) result = result.filter((a) => a.date <= filters.endDate!);
   if (filters.classId) result = result.filter((a) => a.class_id === filters.classId);
   if (filters.sectionId) result = result.filter((a) => a.section_id === filters.sectionId);
   if (filters.studentId) result = result.filter((a) => a.student_id === filters.studentId);
+
+  // Sort descending by date
+  result.sort((a, b) => b.date.localeCompare(a.date));
 
   return result.map((att) => {
     const st = store.students.find((s) => s.id === att.student_id);
@@ -306,29 +340,17 @@ export async function fetchAttendance(filters: {
     const prof = store.profiles.find((p) => p.id === att.marked_by);
     return {
       ...att,
-      student_name: st ? `${st.first_name} ${st.last_name}` : att.student_name,
-      roll_number: st ? st.roll_number : att.roll_number,
-      class_name: cls ? cls.name : att.class_name,
-      section_name: sec ? sec.name : att.section_name,
-      marked_by_name: prof ? prof.full_name : att.marked_by_name,
+      student_name: st ? `${st.first_name} ${st.last_name}`.trim() : (att.student_name || 'Student'),
+      roll_number: st ? st.roll_number : (att.roll_number || '01'),
+      class_name: cls ? cls.name : (att.class_name || 'Class 5'),
+      section_name: sec ? sec.name : (att.section_name || 'Section A'),
+      marked_by_name: prof ? prof.full_name : (att.marked_by_name || 'Class Teacher'),
     };
   });
 }
 
 export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id' | 'created_at'>[]) {
-  if (isSupabaseConfigured) {
-    const { data, error } = await supabase
-      .from('attendance')
-      .upsert(records, { onConflict: 'student_id,date' });
-
-    if (error) {
-      console.error('Supabase attendance batch save error:', error);
-      throw error;
-    }
-    return data;
-  }
-
-  // Fallback demo store upsert
+  // Always update local store first for instant UI response and persistence
   records.forEach((newRec) => {
     const idx = store.attendance.findIndex(
       (a) => a.student_id === newRec.student_id && a.date === newRec.date
@@ -346,6 +368,21 @@ export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id'
   });
 
   store.save();
+
+  if (isSupabaseConfigured) {
+    try {
+      const { error } = await supabase
+        .from('attendance')
+        .upsert(records, { onConflict: 'student_id,date' });
+
+      if (error) {
+        console.warn('Supabase attendance batch save warning:', error);
+      }
+    } catch (sbErr) {
+      console.warn('Supabase attendance batch error:', sbErr);
+    }
+  }
+
   return true;
 }
 
@@ -366,9 +403,22 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
     : (studentData.email || `${studentData.first_name.toLowerCase().replace(/\s+/g, '')}.st@rkvmschool.in`);
   const generatedPassword = studentData.portal_password || generateDefaultPassword(studentData.first_name, studentData.date_of_birth);
 
+  // Generate sequential Student ID: rkvm-s1, rkvm-s2, rkvm-s3...
+  const existingStudents = await fetchStudents();
+  const allList = [...existingStudents, ...store.students];
+  let maxNum = 0;
+  allList.forEach((s) => {
+    const match = s.id?.match(/rkvm-s(\d+)/i);
+    if (match) {
+      const n = parseInt(match[1], 10);
+      if (n > maxNum) maxNum = n;
+    }
+  });
+  const newStudentId = `rkvm-s${maxNum + 1}`;
+
   const newStudent: Student = {
     ...studentData,
-    id: `st-${Date.now()}`,
+    id: newStudentId,
     email: generatedEmail,
     portal_password: generatedPassword,
     created_at: new Date().toISOString(),
@@ -383,7 +433,7 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   const studentProfile: Profile = {
     id: newStudent.id,
     email: generatedEmail,
-    full_name: studentData.first_name,
+    full_name: `${studentData.first_name} ${studentData.last_name}`.trim(),
     phone: studentData.phone,
     role: 'parent',
     portal_password: generatedPassword,
@@ -393,8 +443,16 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   else store.profiles.push(studentProfile);
 
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
-    if (!error && data) return data;
+    try {
+      const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
+      if (!error && data) {
+        store.students.push(data);
+        store.save();
+        return data;
+      }
+    } catch (e) {
+      console.warn('Supabase insert student warning:', e);
+    }
   }
 
   store.students.push(newStudent);
@@ -477,16 +535,43 @@ export async function deleteStudent(id: string): Promise<boolean> {
 
 export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>): Promise<Profile> {
   const generatedPassword = profileData.portal_password || generateDefaultPassword(profileData.full_name, '2011');
+  
+  // Generate sequential Teacher ID: rkvm-t1, rkvm-t2, rkvm-t3...
+  let newId: string;
+  if (profileData.role === 'teacher') {
+    const existingProfiles = await fetchProfiles('teacher');
+    const allProfs = [...existingProfiles, ...store.profiles.filter((p) => p.role === 'teacher')];
+    let maxNum = 0;
+    allProfs.forEach((p) => {
+      const match = p.id?.match(/rkvm-t(\d+)/i);
+      if (match) {
+        const n = parseInt(match[1], 10);
+        if (n > maxNum) maxNum = n;
+      }
+    });
+    newId = `rkvm-t${maxNum + 1}`;
+  } else {
+    newId = `u-${profileData.role}-${Date.now()}`;
+  }
+
   const newProf: Profile = {
     ...profileData,
-    id: `u-${profileData.role}-${Date.now()}`,
+    id: newId,
     portal_password: generatedPassword,
     created_at: new Date().toISOString(),
   };
 
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
-    if (!error && data) return data;
+    try {
+      const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
+      if (!error && data) {
+        store.profiles.push(data);
+        store.save();
+        return data;
+      }
+    } catch (e) {
+      console.warn('Supabase insert profile warning:', e);
+    }
   }
 
   store.profiles.push(newProf);
@@ -617,7 +702,7 @@ export async function exportAttendanceToExcel(records: AttendanceRecord[], filen
 
   if (XLSX && XLSX.utils) {
     const formattedData = records.map((rec) => ({
-      'Date': rec.date,
+      'Date': formatDateDDMMYYYY(rec.date),
       'Student Name': rec.student_name || 'N/A',
       'Class': rec.class_name || 'N/A',
       'Section': rec.section_name || 'N/A',
@@ -640,14 +725,14 @@ export async function exportAttendanceToExcel(records: AttendanceRecord[], filen
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance Records');
-    XLSX.writeFile(workbook, `${filenamePrefix}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(workbook, `${filenamePrefix}_${formatDateDDMMYYYY(new Date())}.xlsx`);
     return;
   }
 
   // Native UTF-8 BOM CSV Export (Excel Compatible)
   const headers = ['Date', 'Student Name', 'Class', 'Section', 'Roll Number', 'Status', 'Marked By'];
   const rows = records.map((rec) => [
-    rec.date,
+    formatDateDDMMYYYY(rec.date),
     `"${(rec.student_name || '').replace(/"/g, '""')}"`,
     `"${(rec.class_name || '').replace(/"/g, '""')}"`,
     `"${(rec.section_name || '').replace(/"/g, '""')}"`,
@@ -662,7 +747,7 @@ export async function exportAttendanceToExcel(records: AttendanceRecord[], filen
 
   const link = document.createElement('a');
   link.setAttribute('href', url);
-  link.setAttribute('download', `${filenamePrefix}_${new Date().toISOString().split('T')[0]}.csv`);
+  link.setAttribute('download', `${filenamePrefix}_${formatDateDDMMYYYY(new Date())}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

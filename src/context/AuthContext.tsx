@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { fetchProfiles, store, addProfile } from '../lib/portal-db';
+import { fetchProfiles, fetchStudents, store, addProfile, generateDefaultPassword } from '../lib/portal-db';
 import type { Profile, UserRole } from '../types/portal';
 
 interface AuthContextType {
@@ -21,41 +21,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Initialize session & user profile
+  // Initialize session & user profile with persistent storage
   useEffect(() => {
     async function initSession() {
       try {
+        let restored = false;
+
         if (isSupabaseConfigured) {
-          const { data } = await supabase.auth.getSession();
-          if (data.session?.user) {
-            setUser({ id: data.session.user.id, email: data.session.user.email || '' });
-            await loadProfile(data.session.user.id, data.session.user.email || '');
-          } else {
-            setUser(null);
-            setProfile(null);
+          try {
+            const { data } = await supabase.auth.getSession();
+            if (data.session?.user) {
+              setUser({ id: data.session.user.id, email: data.session.user.email || '' });
+              await loadProfile(data.session.user.id, data.session.user.email || '');
+              restored = true;
+            }
+          } catch (e) {
+            console.warn('Supabase getSession error:', e);
           }
 
-          const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+          const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (session?.user) {
               setUser({ id: session.user.id, email: session.user.email || '' });
               await loadProfile(session.user.id, session.user.email || '');
-            } else {
+            } else if (event === 'SIGNED_OUT') {
               setUser(null);
               setProfile(null);
+              localStorage.removeItem('rkvm_demo_user');
             }
           });
+        }
 
-          return () => {
-            listener.subscription.unsubscribe();
-          };
-        } else {
-          // Check local stored demo user
+        // Check local stored persistent user if not already restored by Supabase
+        if (!restored && typeof window !== 'undefined') {
           const savedDemoUser = localStorage.getItem('rkvm_demo_user');
           if (savedDemoUser) {
             try {
               const p: Profile = JSON.parse(savedDemoUser);
-              setUser({ id: p.id, email: p.email });
-              setProfile(p);
+              if (p && p.id) {
+                setUser({ id: p.id, email: p.email });
+                setProfile(p);
+                restored = true;
+              }
             } catch {
               // fallback
             }
@@ -75,17 +81,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const isDesignatedAdmin = email.toLowerCase() === 'rkvmschool.in@gmail.com';
 
     if (isSupabaseConfigured) {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
 
-      if (!error && data) {
-        // Enforce Admin role for rkvmschool.in@gmail.com
-        const finalRole = isDesignatedAdmin ? 'admin' : data.role;
-        setProfile({ ...data, role: finalRole });
-        return;
+        if (!error && data) {
+          // Enforce Admin role for rkvmschool.in@gmail.com
+          const finalRole = isDesignatedAdmin ? 'admin' : data.role;
+          const fullProf = { ...data, role: finalRole };
+          setProfile(fullProf);
+          localStorage.setItem('rkvm_demo_user', JSON.stringify(fullProf));
+          return;
+        }
+      } catch (e) {
+        console.warn('Supabase loadProfile fallback:', e);
       }
     }
 
@@ -94,15 +106,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const found = profiles.find((p) => p.id === userId || p.email.toLowerCase() === email.toLowerCase());
     if (found) {
       const finalRole = isDesignatedAdmin ? 'admin' : found.role;
-      setProfile({ ...found, role: finalRole });
+      const fullProf = { ...found, role: finalRole };
+      setProfile(fullProf);
+      localStorage.setItem('rkvm_demo_user', JSON.stringify(fullProf));
     } else {
       const finalRole: UserRole = isDesignatedAdmin ? 'admin' : 'parent';
-      setProfile({
+      const fallbackProf: Profile = {
         id: userId,
         email,
         full_name: email.split('@')[0],
         role: finalRole,
-      });
+      };
+      setProfile(fallbackProf);
+      localStorage.setItem('rkvm_demo_user', JSON.stringify(fallbackProf));
     }
   }
 
@@ -127,35 +143,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Supabase authentication if configured
       if (isSupabaseConfigured) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: cleanInput,
-          password: pass,
-        });
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: cleanInput,
+            password: pass,
+          });
 
-        if (data.user) {
-          setUser({ id: data.user.id, email: data.user.email || '' });
-          const profiles = await fetchProfiles();
-          const prof = profiles.find((p) => p.id === data.user.id || p.email.toLowerCase() === cleanInput);
-          const role: UserRole = isDesignatedAdmin ? 'admin' : prof?.role || 'parent';
-          if (prof) setProfile({ ...prof, role });
-          else setProfile({ id: data.user.id, email: cleanInput, full_name: cleanInput.split('@')[0], role });
-          setLoading(false);
-          return { success: true, role };
+          if (data?.user) {
+            setUser({ id: data.user.id, email: data.user.email || '' });
+            const profiles = await fetchProfiles();
+            const prof = profiles.find((p) => p.id === data.user.id || p.email.toLowerCase() === cleanInput);
+            const role: UserRole = isDesignatedAdmin ? 'admin' : prof?.role || 'parent';
+            const userProfile: Profile = prof
+              ? { ...prof, role }
+              : { id: data.user.id, email: cleanInput, full_name: cleanInput.split('@')[0], role };
+            setProfile(userProfile);
+            localStorage.setItem('rkvm_demo_user', JSON.stringify(userProfile));
+            setLoading(false);
+            return { success: true, role };
+          }
+        } catch (sbErr) {
+          console.warn('Supabase auth attempt error:', sbErr);
         }
       }
 
-      // Local / Demo Store Authentication logic
+      // User & Student Authentication matching (Mobile Number or Email only, not Roll Number)
       const profiles = await fetchProfiles();
-      const matchedProfile = profiles.find(
-        (p) => p.email.toLowerCase() === cleanInput || isPhoneMatch(p.phone)
+      const dbStudents = await fetchStudents();
+
+      // Combine DB and local students uniquely by ID
+      const allStudentsMap = new Map<string, Student>();
+      dbStudents.forEach((s) => allStudentsMap.set(s.id, s));
+      store.students.forEach((s) => allStudentsMap.set(s.id, s));
+      const allAvailableStudents = Array.from(allStudentsMap.values());
+
+      // Candidate students matching Mobile Number or Email (Roll Number is explicitly disallowed)
+      const candidateStudents = allAvailableStudents.filter(
+        (s) => (s.email && s.email.toLowerCase() === cleanInput) || isPhoneMatch(s.phone)
       );
 
-      const matchedStudent = store.students.find(
-        (s) =>
-          s.email?.toLowerCase() === cleanInput ||
-          s.id.toLowerCase() === cleanInput ||
-          s.roll_number === cleanInput ||
-          isPhoneMatch(s.phone)
+      const matchedProfile = profiles.find(
+        (p) => p.email.toLowerCase() === cleanInput || isPhoneMatch(p.phone)
       );
 
       // Designated Admin Check
@@ -180,39 +208,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Teacher / Staff Profile Check
       if (matchedProfile) {
         const expectedPass = matchedProfile.portal_password;
-        if (expectedPass && pass !== expectedPass) {
+        if (expectedPass && pass === expectedPass) {
+          const role: UserRole = matchedProfile.role;
+          setUser({ id: matchedProfile.id, email: matchedProfile.email });
+          setProfile(matchedProfile);
+          localStorage.setItem('rkvm_demo_user', JSON.stringify(matchedProfile));
           setLoading(false);
-          return { success: false, error: 'Invalid password. Please check your password or contact School Admin.' };
+          return { success: true, role };
         }
-
-        const role: UserRole = matchedProfile.role;
-        setUser({ id: matchedProfile.id, email: matchedProfile.email });
-        setProfile(matchedProfile);
-        localStorage.setItem('rkvm_demo_user', JSON.stringify(matchedProfile));
-        setLoading(false);
-        return { success: true, role };
       }
 
-      // Student Account Check
-      if (matchedStudent) {
-        const expectedPass = matchedStudent.portal_password;
-        if (expectedPass && pass !== expectedPass) {
+      // Student Account Check (Supports multiple students sharing the same phone number/email with unique passwords)
+      if (candidateStudents.length > 0) {
+        const matchedStudent = candidateStudents.find((s) => {
+          const defaultStudentPass = generateDefaultPassword(s.first_name, s.date_of_birth);
+          const expectedPass = s.portal_password || defaultStudentPass;
+          return pass === expectedPass;
+        });
+
+        if (matchedStudent) {
+          const studentProfile: Profile = {
+            id: matchedStudent.id,
+            email: matchedStudent.email || cleanInput,
+            full_name: `${matchedStudent.first_name} ${matchedStudent.last_name}`,
+            role: 'parent',
+          };
+
+          setUser({ id: studentProfile.id, email: studentProfile.email });
+          setProfile(studentProfile);
+          localStorage.setItem('rkvm_demo_user', JSON.stringify(studentProfile));
           setLoading(false);
-          return { success: false, error: 'Invalid password for student account. Please contact School Admin.' };
+          return { success: true, role: 'parent' };
         }
 
-        const studentProfile: Profile = {
-          id: matchedStudent.id,
-          email: matchedStudent.email || cleanInput,
-          full_name: `${matchedStudent.first_name} ${matchedStudent.last_name}`,
-          role: 'parent',
-        };
-
-        setUser({ id: studentProfile.id, email: studentProfile.email });
-        setProfile(studentProfile);
-        localStorage.setItem('rkvm_demo_user', JSON.stringify(studentProfile));
+        // If candidates were found for this phone/email but no password matched
         setLoading(false);
-        return { success: true, role: 'parent' };
+        if (candidateStudents.length > 1) {
+          const names = candidateStudents.map((s) => s.first_name).join(', ');
+          return {
+            success: false,
+            error: `Multiple student accounts are registered with this Mobile Number (${names}). Please enter the specific password for the student you wish to access.`,
+          };
+        }
+
+        return {
+          success: false,
+          error: 'Invalid password for this student account. Please verify your password or contact School Admin.',
+        };
+      }
+
+      // If matchedProfile was found but password was wrong
+      if (matchedProfile) {
+        setLoading(false);
+        return { success: false, error: 'Invalid password. Please check your credentials or contact School Admin.' };
       }
 
       setLoading(false);

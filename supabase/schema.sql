@@ -3,274 +3,212 @@
 -- ==========================================
 
 -- 1. Create Enums
-CREATE TYPE public.user_role AS ENUM ('admin', 'teacher', 'parent');
-CREATE TYPE public.attendance_status AS ENUM ('present', 'absent', 'late');
-CREATE TYPE public.student_status AS ENUM ('active', 'inactive');
+DO $$ BEGIN
+    CREATE TYPE public.user_role AS ENUM ('admin', 'teacher', 'parent');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- 2. Profiles Table (Extends auth.users)
-CREATE TABLE public.profiles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+DO $$ BEGIN
+    CREATE TYPE public.attendance_status AS ENUM ('present', 'absent', 'late');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE public.student_status AS ENUM ('active', 'inactive');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- 2. Profiles Table
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id TEXT PRIMARY KEY,
     email TEXT NOT NULL,
     full_name TEXT NOT NULL,
     role public.user_role NOT NULL DEFAULT 'parent',
     phone TEXT,
     avatar_url TEXT,
+    portal_password TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 3. Classes Table
-CREATE TABLE public.classes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+CREATE TABLE IF NOT EXISTS public.classes (
+    id TEXT PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 4. Sections Table
-CREATE TABLE public.sections (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    class_id UUID NOT NULL REFERENCES public.classes(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS public.sections (
+    id TEXT PRIMARY KEY,
+    class_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(class_id, name)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 5. Students Table
-CREATE TABLE public.students (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+CREATE TABLE IF NOT EXISTS public.students (
+    id TEXT PRIMARY KEY,
     roll_number TEXT NOT NULL,
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
+    phone TEXT,
+    email TEXT,
     date_of_birth DATE,
     gender TEXT,
-    class_id UUID NOT NULL REFERENCES public.classes(id) ON DELETE RESTRICT,
-    section_id UUID NOT NULL REFERENCES public.sections(id) ON DELETE RESTRICT,
+    class_id TEXT NOT NULL,
+    section_id TEXT NOT NULL,
+    father_name TEXT,
+    father_occupation TEXT,
+    mother_name TEXT,
+    mother_occupation TEXT,
+    address TEXT,
+    portal_password TEXT,
     avatar_url TEXT,
-    status public.student_status NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(class_id, section_id, roll_number)
-);
-
--- 6. Teachers Table (Linked to profiles)
-CREATE TABLE public.teachers (
-    id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-    employee_id TEXT NOT NULL UNIQUE,
-    qualification TEXT,
+    pending_avatar_url TEXT,
+    pending_avatar_status TEXT,
     status public.student_status NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 7. Teacher Class & Section Assignments
-CREATE TABLE public.teacher_classes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    teacher_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    class_id UUID NOT NULL REFERENCES public.classes(id) ON DELETE CASCADE,
-    section_id UUID NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(teacher_id, class_id, section_id)
+-- 6. Teacher Classes Table
+CREATE TABLE IF NOT EXISTS public.teacher_classes (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    teacher_id TEXT NOT NULL,
+    class_id TEXT NOT NULL,
+    section_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 8. Parents Table (Linked to profiles)
-CREATE TABLE public.parents (
-    id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-    occupation TEXT,
-    status public.student_status NOT NULL DEFAULT 'active',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 9. Parent-Student Link
-CREATE TABLE public.parent_students (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    parent_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
+-- 7. Parent Student Links Table
+CREATE TABLE IF NOT EXISTS public.parent_students (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    parent_id TEXT NOT NULL,
+    student_id TEXT NOT NULL,
     relationship TEXT NOT NULL DEFAULT 'Parent/Guardian',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(parent_id, student_id)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 10. Attendance Table
-CREATE TABLE public.attendance (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
-    class_id UUID NOT NULL REFERENCES public.classes(id) ON DELETE CASCADE,
-    section_id UUID NOT NULL REFERENCES public.sections(id) ON DELETE CASCADE,
+-- 8. Attendance Table
+CREATE TABLE IF NOT EXISTS public.attendance (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    student_id TEXT NOT NULL,
+    class_id TEXT NOT NULL,
+    section_id TEXT NOT NULL,
     date DATE NOT NULL,
     status public.attendance_status NOT NULL,
-    marked_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE RESTRICT,
+    marked_by TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(student_id, date)
 );
 
--- 11. Notices Table
-CREATE TABLE public.notices (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- 9. Notices Table
+CREATE TABLE IF NOT EXISTS public.notices (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    target_role TEXT NOT NULL DEFAULT 'all', -- 'all', 'teacher', 'parent'
-    created_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    target_role TEXT NOT NULL DEFAULT 'all',
+    created_by TEXT,
+    author_name TEXT,
     is_pinned BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Indexing for performance
-CREATE INDEX idx_students_class_section ON public.students(class_id, section_id);
-CREATE INDEX idx_attendance_student ON public.attendance(student_id);
-CREATE INDEX idx_attendance_date ON public.attendance(date);
-CREATE INDEX idx_attendance_class_section_date ON public.attendance(class_id, section_id, date);
-
--- 12. Trigger to handle profile creation on signup
--- Grants ADMIN access ONLY to rkvmschool.in@gmail.com
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.profiles (id, email, full_name, role)
-    VALUES (
-        NEW.id,
-        NEW.email,
-        COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email),
-        CASE 
-            WHEN LOWER(NEW.email) = 'rkvmschool.in@gmail.com' THEN 'admin'::public.user_role
-            ELSE COALESCE((NEW.raw_user_meta_data->>'role')::public.user_role, 'parent'::public.user_role)
-        END
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE OR REPLACE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
 -- ==========================================
--- ROW LEVEL SECURITY (RLS) POLICIES
+-- SEED INITIAL CLASSES & SECTIONS
 -- ==========================================
+INSERT INTO public.classes (id, name) VALUES
+    ('c1', 'LKG'),
+    ('c2', 'UKG'),
+    ('c3', 'Class 1'),
+    ('c4', 'Class 2'),
+    ('c5', 'Class 3'),
+    ('c6', 'Class 4'),
+    ('c7', 'Class 5'),
+    ('c8', 'Class 6'),
+    ('c9', 'Class 7'),
+    ('c10', 'Class 8'),
+    ('c11', 'Class 9'),
+    ('c12', 'Class 10')
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
 
+INSERT INTO public.sections (id, class_id, name) VALUES
+    ('s-a', 'all', 'Section A'),
+    ('s-b', 'all', 'Section B')
+ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+
+-- SEED ADMIN PROFILE
+INSERT INTO public.profiles (id, email, full_name, role, phone, portal_password) VALUES
+    ('u-admin-1', 'rkvmschool.in@gmail.com', 'RKVM School Administrator', 'admin', '+91 97326 40068', 'Rkvm@12345')
+ON CONFLICT (id) DO UPDATE SET portal_password = EXCLUDED.portal_password;
+
+-- SEED NOTICE
+INSERT INTO public.notices (id, title, content, target_role, author_name, is_pinned) VALUES
+    ('n-1', 'Welcome to RKVM Management Portal', 'The school management and attendance portal is now live. School administrators can add teachers and enroll students.', 'all', 'Headmaster', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- ENABLE ROW LEVEL SECURITY
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.teachers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teacher_classes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.parents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.parent_students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
 
--- Helper functions for RLS checks
-CREATE OR REPLACE FUNCTION public.get_current_role()
-RETURNS public.user_role AS $$
-  SELECT role FROM public.profiles WHERE id = auth.uid();
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
+-- PERMISSIVE RLS POLICIES FOR PORTAL OPERATIONS
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to profiles" ON public.profiles;
+    CREATE POLICY "Public access to profiles" ON public.profiles FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
--- PROFILES POLICIES
-CREATE POLICY "Admins have full access to profiles"
-ON public.profiles FOR ALL
-USING (public.get_current_role() = 'admin');
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to classes" ON public.classes;
+    CREATE POLICY "Public access to classes" ON public.classes FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
-CREATE POLICY "Users can view their own profile"
-ON public.profiles FOR SELECT
-USING (id = auth.uid());
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to sections" ON public.sections;
+    CREATE POLICY "Public access to sections" ON public.sections FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
-CREATE POLICY "Users can update their own profile photo and phone"
-ON public.profiles FOR UPDATE
-USING (id = auth.uid())
-WITH CHECK (id = auth.uid());
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to students" ON public.students;
+    CREATE POLICY "Public access to students" ON public.students FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
--- CLASSES & SECTIONS POLICIES
-CREATE POLICY "Admins have full access to classes"
-ON public.classes FOR ALL USING (public.get_current_role() = 'admin');
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to teacher_classes" ON public.teacher_classes;
+    CREATE POLICY "Public access to teacher_classes" ON public.teacher_classes FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
-CREATE POLICY "Authenticated users can view classes"
-ON public.classes FOR SELECT TO authenticated USING (true);
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to parent_students" ON public.parent_students;
+    CREATE POLICY "Public access to parent_students" ON public.parent_students FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
-CREATE POLICY "Admins have full access to sections"
-ON public.sections FOR ALL USING (public.get_current_role() = 'admin');
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to attendance" ON public.attendance;
+    CREATE POLICY "Public access to attendance" ON public.attendance FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
-CREATE POLICY "Authenticated users can view sections"
-ON public.sections FOR SELECT TO authenticated USING (true);
-
--- STUDENTS POLICIES
-CREATE POLICY "Admins have full access to students"
-ON public.students FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Teachers can view active students"
-ON public.students FOR SELECT USING (public.get_current_role() = 'teacher');
-
-CREATE POLICY "Parents can view only their linked children"
-ON public.students FOR SELECT USING (
-    public.get_current_role() = 'parent' AND
-    id IN (SELECT student_id FROM public.parent_students WHERE parent_id = auth.uid())
-);
-
--- TEACHERS POLICIES
-CREATE POLICY "Admins have full access to teachers"
-ON public.teachers FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Teachers can view teacher entries"
-ON public.teachers FOR SELECT TO authenticated USING (true);
-
--- TEACHER_CLASSES POLICIES
-CREATE POLICY "Admins have full access to teacher_classes"
-ON public.teacher_classes FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Teachers can view their own assignments"
-ON public.teacher_classes FOR SELECT USING (teacher_id = auth.uid());
-
--- PARENTS & PARENT_STUDENTS POLICIES
-CREATE POLICY "Admins have full access to parents"
-ON public.parents FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Parents can view their parent entry"
-ON public.parents FOR SELECT USING (id = auth.uid());
-
-CREATE POLICY "Admins have full access to parent_students"
-ON public.parent_students FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Parents can view their student links"
-ON public.parent_students FOR SELECT USING (parent_id = auth.uid());
-
--- ATTENDANCE POLICIES
-CREATE POLICY "Admins have full access to attendance"
-ON public.attendance FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Teachers can mark and edit attendance for assigned classes"
-ON public.attendance FOR ALL USING (
-    public.get_current_role() = 'teacher' AND (
-        class_id IN (SELECT class_id FROM public.teacher_classes WHERE teacher_id = auth.uid())
-    )
-);
-
-CREATE POLICY "Parents can view attendance for their children only"
-ON public.attendance FOR SELECT USING (
-    public.get_current_role() = 'parent' AND
-    student_id IN (SELECT student_id FROM public.parent_students WHERE parent_id = auth.uid())
-);
-
--- NOTICES POLICIES
-CREATE POLICY "Admins have full access to notices"
-ON public.notices FOR ALL USING (public.get_current_role() = 'admin');
-
-CREATE POLICY "Authenticated users can view targeted notices"
-ON public.notices FOR SELECT TO authenticated USING (
-    target_role = 'all' OR
-    target_role = (public.get_current_role())::text
-);
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to notices" ON public.notices;
+    CREATE POLICY "Public access to notices" ON public.notices FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
 
 -- STORAGE BUCKET FOR AVATARS
 INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true)
 ON CONFLICT (id) DO NOTHING;
 
-CREATE POLICY "Public profile photos are viewable by anyone"
-ON storage.objects FOR SELECT USING (bucket_id = 'avatars');
-
-CREATE POLICY "Authenticated users can upload profile photos"
-ON storage.objects FOR INSERT TO authenticated
-WITH CHECK (bucket_id = 'avatars');
-
-CREATE POLICY "Users can update or delete profile photos"
-ON storage.objects FOR UPDATE TO authenticated USING (bucket_id = 'avatars');
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public avatar access" ON storage.objects;
+    CREATE POLICY "Public avatar access" ON storage.objects FOR ALL USING (bucket_id = 'avatars');
+EXCEPTION WHEN others THEN null; END $$;

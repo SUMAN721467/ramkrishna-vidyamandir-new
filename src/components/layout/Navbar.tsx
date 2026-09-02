@@ -5,11 +5,13 @@ import { GraduationCap, Menu, X } from "lucide-react";
 import { navigation, SCHOOL } from "@/data/site";
 import { cn } from "@/lib/utils";
 import { ActionLink } from "@/components/ui-kit/ActionButton";
+import { useAuth } from "@/context/AuthContext";
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
   const location = useLocation();
+  const { role, user } = useAuth();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16);
@@ -56,10 +58,10 @@ export function Navbar() {
             </Link>
           ))}
           <Link
-            to="/portal/login"
-            className="rounded-full px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/10"
+            to="/portal"
+            className="rounded-full px-3 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 flex items-center gap-1.5"
           >
-            Portal
+            {role ? 'Portal Dashboard' : 'Portal'}
           </Link>
           <ActionLink to="/admissions" size="sm" className="ml-2">
             Admission
@@ -105,10 +107,10 @@ export function Navbar() {
               ))}
               <li>
                 <Link
-                  to="/portal/login"
+                  to="/portal"
                   className="block rounded-2xl px-4 py-3 text-sm font-bold text-primary transition-colors hover:bg-primary/10"
                 >
-                  School Portal Login
+                  {role ? 'School Portal Dashboard' : 'School Portal Login'}
                 </Link>
               </li>
               <li className="pt-2">

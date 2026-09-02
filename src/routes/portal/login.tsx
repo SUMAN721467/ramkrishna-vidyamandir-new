@@ -10,8 +10,17 @@ export const Route = createFileRoute('/portal/login')({
 });
 
 function PortalLoginPage() {
-  const { signIn, role: activeRole } = useAuth();
+  const { signIn, role: activeRole, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+
+  // Auto-redirect if already logged in
+  React.useEffect(() => {
+    if (!authLoading && activeRole) {
+      if (activeRole === 'admin') navigate({ to: '/portal/admin' });
+      else if (activeRole === 'teacher') navigate({ to: '/portal/teacher' });
+      else navigate({ to: '/portal/parent' });
+    }
+  }, [activeRole, authLoading, navigate]);
 
   // Form Fields
   const [identifier, setIdentifier] = useState(() => {

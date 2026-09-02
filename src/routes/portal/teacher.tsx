@@ -22,6 +22,7 @@ import {
   submitAttendanceBatch,
   fetchNotices,
 } from '../../lib/portal-db';
+import { formatDateDDMMYYYY } from '../../lib/format';
 import { toast } from 'sonner';
 import type { Student, AttendanceRecord, Notice, AttendanceStatus } from '../../types/portal';
 
@@ -363,7 +364,7 @@ function TeacherDashboardPage() {
                 <h3 className="text-sm font-bold text-foreground">
                   Student List ({students.length} Students)
                 </h3>
-                <span className="text-xs text-muted-foreground font-mono">Date: {selectedDate}</span>
+                <span className="text-xs text-muted-foreground font-mono">Date: {formatDateDDMMYYYY(selectedDate)}</span>
               </div>
 
               {loading ? (
@@ -482,7 +483,7 @@ function TeacherDashboardPage() {
                   <tbody className="divide-y divide-border">
                     {recentRecords.map((r) => (
                       <tr key={r.id}>
-                        <td className="px-4 py-3 font-mono text-xs">{r.date}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{formatDateDDMMYYYY(r.date)}</td>
                         <td className="px-4 py-3 font-bold">{r.student_name || 'Anirban Das'}</td>
                         <td className="px-4 py-3 font-mono font-bold text-primary">#{r.roll_number || '01'}</td>
                         <td className="px-4 py-3">
@@ -515,7 +516,7 @@ function TeacherDashboardPage() {
                   <h3 className="text-base font-bold text-foreground">{n.title}</h3>
                   <p className="text-xs text-muted-foreground leading-relaxed">{n.content}</p>
                   <p className="text-[11px] text-muted-foreground pt-2 border-t border-border/60">
-                    Posted on: {new Date(n.created_at).toLocaleDateString()}
+                    Posted on: {formatDateDDMMYYYY(n.created_at)}
                   </p>
                 </div>
               ))}
