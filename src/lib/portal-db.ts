@@ -169,7 +169,7 @@ export async function fetchProfiles(role?: UserRole): Promise<Profile[]> {
       let query = supabase.from('profiles').select('*');
       if (role) query = query.eq('role', role);
       const { data, error } = await query;
-      if (!error && data && data.length > 0) return data;
+      if (!error && data) return data;
     } catch (e) {
       console.warn('Supabase fetchProfiles fallback:', e);
     }
@@ -192,7 +192,7 @@ export async function fetchStudents(classId?: string, sectionId?: string): Promi
       if (sectionId) query = query.eq('section_id', sectionId);
 
       const { data, error } = await query;
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return data.map((st: any) => ({
           ...st,
           class_name: st.classes?.name,
@@ -218,7 +218,7 @@ export async function fetchTeacherClasses(teacherId: string) {
         .select('*, classes(name), sections(name)')
         .eq('teacher_id', teacherId);
 
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return data.map((tc: any) => ({
           class_id: tc.class_id,
           section_id: tc.section_id,
@@ -264,7 +264,7 @@ export async function fetchParentChildren(parentId: string): Promise<Student[]> 
         .select('student_id, students(*, classes(name), sections(name))')
         .eq('parent_id', parentId);
 
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return data.map((item: any) => ({
           ...item.students,
           class_name: item.students?.classes?.name,
@@ -307,7 +307,7 @@ export async function fetchAttendance(filters: {
       if (filters.studentId) query = query.eq('student_id', filters.studentId);
 
       const { data, error } = await query;
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         return data.map((att: any) => ({
           ...att,
           student_name: `${att.students?.first_name || ''} ${att.students?.last_name || ''}`.trim(),
@@ -370,16 +370,12 @@ export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id'
   store.save();
 
   if (isSupabaseConfigured) {
-    try {
-      const { error } = await supabase
-        .from('attendance')
-        .upsert(records, { onConflict: 'student_id,date' });
+    const { error } = await supabase
+      .from('attendance')
+      .upsert(records, { onConflict: 'student_id,date' });
 
-      if (error) {
-        console.warn('Supabase attendance batch save warning:', error);
-      }
-    } catch (sbErr) {
-      console.warn('Supabase attendance batch error:', sbErr);
+    if (error) {
+      throw new Error(error.message || 'Database error: Failed to save attendance.');
     }
   }
 
@@ -443,16 +439,13 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   else store.profiles.push(studentProfile);
 
   if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
-      if (!error && data) {
-        store.students.push(data);
-        store.save();
-        return data;
-      }
-    } catch (e) {
-      console.warn('Supabase insert student warning:', e);
+    const { data, error } = await supabase.from('students').insert([newStudent]).select().single();
+    if (error || !data) {
+      throw new Error(error?.message || 'Database connection error: Failed to enroll student.');
     }
+    store.students.push(data);
+    store.save();
+    return data;
   }
 
   store.students.push(newStudent);
@@ -562,16 +555,13 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
   };
 
   if (isSupabaseConfigured) {
-    try {
-      const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
-      if (!error && data) {
-        store.profiles.push(data);
-        store.save();
-        return data;
-      }
-    } catch (e) {
-      console.warn('Supabase insert profile warning:', e);
+    const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
+    if (error || !data) {
+      throw new Error(error?.message || 'Database connection error: Failed to add teacher profile.');
     }
+    store.profiles.push(data);
+    store.save();
+    return data;
   }
 
   store.profiles.push(newProf);
