@@ -40,7 +40,9 @@ class QueryBuilder {
 
   select(cols = '*') {
     this.selectCols = cols;
-    this.action = 'select';
+    if (this.action !== 'insert' && this.action !== 'update' && this.action !== 'delete') {
+      this.action = 'select';
+    }
     return this;
   }
 
