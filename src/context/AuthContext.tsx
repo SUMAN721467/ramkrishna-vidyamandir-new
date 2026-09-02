@@ -78,7 +78,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function loadProfile(userId: string, email: string) {
-    const isDesignatedAdmin = email.toLowerCase() === 'rkvmschool.in@gmail.com';
+    const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || import.meta.env.ADMIN_EMAILS || 'rkvmschool.in@gmail.com')
+      .split(',')
+      .map((e: string) => e.trim().toLowerCase());
+    const isDesignatedAdmin = adminEmails.includes(email.toLowerCase());
 
     if (isSupabaseConfigured) {
       try {
@@ -139,7 +142,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
       };
 
-      const isDesignatedAdmin = cleanInput === 'rkvmschool.in@gmail.com' || cleanPhoneDigits === '9732640068';
+      const adminEmails = (import.meta.env.VITE_ADMIN_EMAILS || import.meta.env.ADMIN_EMAILS || 'rkvmschool.in@gmail.com')
+        .split(',')
+        .map((e: string) => e.trim().toLowerCase());
+      const isDesignatedAdmin = adminEmails.includes(cleanInput) || cleanPhoneDigits === '9732640068';
 
       // Supabase authentication if configured
       if (isSupabaseConfigured) {
