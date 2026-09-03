@@ -7,7 +7,7 @@ export const notices: Notice[] = [
     date: "2026-07-28",
     category: "Admission",
     description:
-      "Application forms for LKG to Class IX are available at the school office and can also be downloaded from the Admissions page. Submit completed forms by 31 January 2027.",
+      "Application forms for Play to Class IX are available at the school office and can also be downloaded from the Admissions page. Submit completed forms by 31 January 2027.",
     isNew: true,
   },
   {

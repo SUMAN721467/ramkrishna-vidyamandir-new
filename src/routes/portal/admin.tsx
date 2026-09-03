@@ -9,6 +9,7 @@ import {
   Plus,
   Trash2,
   Edit2,
+  Edit3,
   Search,
   Filter,
   CheckCircle,
@@ -32,6 +33,8 @@ import {
   KeyRound,
   Key,
   Lock,
+  Save,
+  Camera,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PortalHeader } from '../../components/portal/PortalHeader';
@@ -47,15 +50,20 @@ import {
   updateStudent,
   addProfile,
   linkParentToStudent,
-  assignTeacherToClass,
   deleteStudent,
   deleteAttendanceRecord,
   exportAttendanceToExcel,
   addNotice,
   deleteNotice,
+  deleteProfile,
+  updateProfile,
   approveStudentPhotoChange,
   rejectStudentPhotoChange,
   generateDefaultPassword,
+  generateTeacherDefaultPassword,
+  isSyntheticEmail,
+  formatDisplayEmail,
+  clearTeacherClasses,
   updateUserPassword,
   fetchScheduledExams,
   addScheduledExam,
@@ -65,8 +73,13 @@ import {
   addClassTimetableEntry,
   updateClassTimetableEntry,
   deleteClassTimetableEntry,
+  fetchSubjects,
+  addSubject,
+  updateSubject,
+  deleteSubject,
 } from '../../lib/portal-db';
-import { formatDateDDMMYYYY } from '../../lib/format';
+import { formatDateDDMMYYYY, formatDateSlash, parseDateToISO } from '../../lib/format';
+import { DateInput } from '../../components/ui/date-input';
 import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
 import type {
@@ -80,6 +93,8 @@ import type {
   ClassTimetableEntry,
   DayOfWeek,
   UserRole,
+  Subject,
+  SubjectCategory,
 } from '../../types/portal';
 
 export const Route = createFileRoute('/portal/admin')({
@@ -88,12 +103,17 @@ export const Route = createFileRoute('/portal/admin')({
 
 const DAYS_OF_WEEK: DayOfWeek[] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+const SUBJECT_CATEGORIES: SubjectCategory[] = [
+  'Academic',
+  'Co-curricular / Activity',
+];
+
 function AdminDashboardPage() {
   const { user, profile, role, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
-  // Active Tab state: 'overview' | 'students' | 'teachers' | 'parents' | 'classes' | 'attendance' | 'timetable' | 'exams' | 'notices'
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'parents' | 'classes' | 'attendance' | 'timetable' | 'exams' | 'notices'>('overview');
+  // Active Tab state: 'overview' | 'students' | 'teachers' | 'subjects' | 'parents' | 'classes' | 'attendance' | 'timetable' | 'exams' | 'notices'
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'teachers' | 'subjects' | 'parents' | 'classes' | 'attendance' | 'timetable' | 'exams' | 'notices'>('overview');
 
   // Loading state
   const [loading, setLoading] = useState(true);
@@ -108,6 +128,29 @@ function AdminDashboardPage() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [scheduledExams, setScheduledExams] = useState<ScheduledExam[]>([]);
   const [classTimetables, setClassTimetables] = useState<ClassTimetableEntry[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+
+  // Subjects Management State
+  const [subjectSearch, setSubjectSearch] = useState('');
+  const [selectedSubjectClass, setSelectedSubjectClass] = useState<string>('all');
+  const [selectedSubjectCategory, setSelectedSubjectCategory] = useState<string>('all');
+  const [showSubjectModal, setShowSubjectModal] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
+  const [deleteSubjectId, setDeleteSubjectId] = useState<string | null>(null);
+  const [savingSubject, setSavingSubject] = useState(false);
+  const [subjectForm, setSubjectForm] = useState<{
+    name: string;
+    code: string;
+    class_id: string;
+    category: SubjectCategory;
+    description: string;
+  }>({
+    name: '',
+    code: '',
+    class_id: 'all',
+    category: 'Academic',
+    description: '',
+  });
 
   // Class Timetable Management State
   const [selectedRoutineClass, setSelectedRoutineClass] = useState<string>('c7');
@@ -119,26 +162,24 @@ function AdminDashboardPage() {
     class_id: string;
     day_of_week: DayOfWeek;
     period_number: number;
-    start_time: string;
-    end_time: string;
     subject: string;
     teacher_name: string;
-    room_number: string;
   }>({
     class_id: 'c7',
     day_of_week: 'Monday',
     period_number: 1,
-    start_time: '10:30 AM',
-    end_time: '11:15 AM',
-    subject: 'Mathematics',
-    teacher_name: 'Sourav Ganguly',
-    room_number: 'Room 101',
+    subject: 'Bengali (বাংলা)',
+    teacher_name: 'NA',
   });
 
   // Class-wise filter in Student Directory & Exams
   const [filterClassId, setFilterClassId] = useState<string>('all');
   const [examClassFilter, setExamClassFilter] = useState<string>('all');
   const [deleteStudentId, setDeleteStudentId] = useState<string | null>(null);
+  const [deleteTeacherModal, setDeleteTeacherModal] = useState<{ id: string; name: string } | null>(null);
+  const [deleteExamModal, setDeleteExamModal] = useState<{ id: string; name: string } | null>(null);
+  const [deleteTimetableModal, setDeleteTimetableModal] = useState<{ id: string; description: string } | null>(null);
+  const [deleteNoticeModal, setDeleteNoticeModal] = useState<{ id: string; title: string } | null>(null);
 
   // Exam Scheduling Form & Modal state
   const [showExamModal, setShowExamModal] = useState(false);
@@ -189,8 +230,46 @@ function AdminDashboardPage() {
     class_id: '',
     section_id: '',
     status: 'active' as const,
+    father_name: '',
+    father_occupation: '',
+    mother_name: '',
+    mother_occupation: '',
+    alt_phone: '',
+    email: '',
+    address: '',
+    aadhar_number: '',
   });
   const [studentPhotoFile, setStudentPhotoFile] = useState<File | null>(null);
+
+  // Parent & Contact Info Edit Modal
+  const [showParentInfoModal, setShowParentInfoModal] = useState(false);
+  const [parentInfoForm, setParentInfoForm] = useState({
+    father_name: '',
+    father_occupation: '',
+    mother_name: '',
+    mother_occupation: '',
+    phone: '',
+    alt_phone: '',
+    email: '',
+    address: '',
+    aadhar_number: '',
+  });
+
+  // Teacher Management & Details State
+  const [viewingTeacherDetails, setViewingTeacherDetails] = useState<Profile | null>(null);
+  const [showEditTeacherModal, setShowEditTeacherModal] = useState(false);
+  const [editingTeacherData, setEditingTeacherData] = useState<Profile | null>(null);
+  const [teacherEditForm, setTeacherEditForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    address: '',
+    qualification: '',
+    specialized_subject: '',
+    aadhar_number: '',
+    avatar_url: '',
+  });
+  const [teacherPhotoFile, setTeacherPhotoFile] = useState<File | null>(null);
 
   // Teacher Form Modal
   const [showTeacherModal, setShowTeacherModal] = useState(false);
@@ -200,8 +279,6 @@ function AdminDashboardPage() {
     phone: '',
     employee_id: '',
     qualification: '',
-    assigned_class_id: '',
-    assigned_section_id: '',
   });
 
   // Parent Form Modal
@@ -252,6 +329,7 @@ function AdminDashboardPage() {
       const nots = await fetchNotices();
       const ex = await fetchScheduledExams();
       const tt = await fetchClassTimetable('all');
+      const subs = await fetchSubjects();
 
       setClasses(cls);
       setSections(sec);
@@ -262,10 +340,12 @@ function AdminDashboardPage() {
       setNotices(nots);
       setScheduledExams(ex);
       setClassTimetables(tt);
+      setSubjects(subs);
+
+      clearTeacherClasses().catch(() => {});
 
       if (cls.length > 0) {
         setStudentForm((prev) => ({ ...prev, class_id: cls[0].id }));
-        setTeacherForm((prev) => ({ ...prev, assigned_class_id: cls[0].id }));
         setExamForm((prev) => ({ ...prev, class_id: cls[0].id }));
         if (!selectedRoutineClass) {
           setSelectedRoutineClass(cls[0].id);
@@ -273,7 +353,6 @@ function AdminDashboardPage() {
       }
       if (sec.length > 0) {
         setStudentForm((prev) => ({ ...prev, section_id: sec[0].id }));
-        setTeacherForm((prev) => ({ ...prev, assigned_section_id: sec[0].id }));
       }
       if (st.length > 0) {
         setParentForm((prev) => ({ ...prev, linked_student_id: st[0].id }));
@@ -286,6 +365,71 @@ function AdminDashboardPage() {
     }
   };
 
+  // Subject Management Handlers (Admin Only)
+  const openCreateSubjectModal = () => {
+    setEditingSubject(null);
+    setSubjectForm({
+      name: '',
+      code: '',
+      class_id: 'all',
+      category: 'Academic',
+      description: '',
+    });
+    setShowSubjectModal(true);
+  };
+
+  const openEditSubjectModal = (sub: Subject) => {
+    setEditingSubject(sub);
+    setSubjectForm({
+      name: sub.name,
+      code: sub.code || '',
+      class_id: sub.class_id || 'all',
+      category: sub.category || 'Academic',
+      description: sub.description || '',
+    });
+    setShowSubjectModal(true);
+  };
+
+  const handleSaveSubject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!subjectForm.name.trim()) {
+      toast.error('Subject name is required');
+      return;
+    }
+    setSavingSubject(true);
+    try {
+      if (editingSubject) {
+        await updateSubject(editingSubject.id, subjectForm);
+        toast.success(`Subject "${subjectForm.name}" updated successfully!`);
+      } else {
+        await addSubject(subjectForm);
+        toast.success(`Subject "${subjectForm.name}" created successfully!`);
+      }
+      setShowSubjectModal(false);
+      const subs = await fetchSubjects();
+      setSubjects(subs);
+    } catch (err: any) {
+      console.error('[Admin Dashboard] Failed to save subject:', err);
+      toast.error(err?.message || 'Failed to save subject');
+    } finally {
+      setSavingSubject(false);
+    }
+  };
+
+  const confirmDeleteSubject = async () => {
+    if (!deleteSubjectId) return;
+    try {
+      await deleteSubject(deleteSubjectId);
+      toast.success('Subject deleted successfully!');
+      setDeleteSubjectId(null);
+      const subs = await fetchSubjects();
+      setSubjects(subs);
+    } catch (err: any) {
+      console.error('[Admin Dashboard] Failed to delete subject:', err);
+      toast.error(err?.message || 'Failed to delete subject');
+    }
+  };
+
   // Class Timetable / Daily Routine Handlers (Admin Only)
   const openCreateTimetableModal = (defaultDay?: DayOfWeek) => {
     setEditingTimetableEntry(null);
@@ -293,11 +437,8 @@ function AdminDashboardPage() {
       class_id: selectedRoutineClass || classes[0]?.id || 'c7',
       day_of_week: defaultDay || selectedRoutineDay || 'Monday',
       period_number: 1,
-      start_time: '10:30 AM',
-      end_time: '11:15 AM',
-      subject: 'Bengali (1st Language)',
-      teacher_name: teachers[0]?.full_name || 'Subrata Sen',
-      room_number: 'Room 101',
+      subject: subjects[0]?.name || 'Bengali (বাংলা)',
+      teacher_name: teachers[0]?.full_name || 'NA',
     });
     setShowTimetableModal(true);
   };
@@ -308,18 +449,15 @@ function AdminDashboardPage() {
       class_id: entry.class_id,
       day_of_week: entry.day_of_week,
       period_number: entry.period_number,
-      start_time: entry.start_time,
-      end_time: entry.end_time,
       subject: entry.subject,
-      teacher_name: entry.teacher_name,
-      room_number: entry.room_number || '',
+      teacher_name: entry.teacher_name || 'NA',
     });
     setShowTimetableModal(true);
   };
 
   const handleSaveTimetable = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!timetableForm.class_id || !timetableForm.subject || !timetableForm.teacher_name || !timetableForm.start_time || !timetableForm.end_time) {
+    if (!timetableForm.class_id || !timetableForm.subject || !timetableForm.teacher_name || !timetableForm.period_number) {
       toast.error('Please fill in all required routine fields.');
       return;
     }
@@ -331,11 +469,11 @@ function AdminDashboardPage() {
           class_id: timetableForm.class_id,
           day_of_week: timetableForm.day_of_week,
           period_number: Number(timetableForm.period_number) || 1,
-          start_time: timetableForm.start_time.trim(),
-          end_time: timetableForm.end_time.trim(),
+          start_time: '',
+          end_time: '',
           subject: timetableForm.subject.trim(),
           teacher_name: timetableForm.teacher_name.trim(),
-          room_number: timetableForm.room_number?.trim() || '',
+          room_number: '',
         });
         toast.success('Timetable period updated successfully!');
       } else {
@@ -343,11 +481,11 @@ function AdminDashboardPage() {
           class_id: timetableForm.class_id,
           day_of_week: timetableForm.day_of_week,
           period_number: Number(timetableForm.period_number) || 1,
-          start_time: timetableForm.start_time.trim(),
-          end_time: timetableForm.end_time.trim(),
+          start_time: '',
+          end_time: '',
           subject: timetableForm.subject.trim(),
           teacher_name: timetableForm.teacher_name.trim(),
-          room_number: timetableForm.room_number?.trim() || '',
+          room_number: '',
         });
         toast.success('Period slot added to timetable!');
       }
@@ -360,15 +498,19 @@ function AdminDashboardPage() {
     }
   };
 
-  const handleDeleteTimetable = async (id: string, subject: string, day: string, period: number) => {
-    if (window.confirm(`Are you sure you want to remove Period ${period} (${subject}) on ${day}?`)) {
-      try {
-        await deleteClassTimetableEntry(id);
-        toast.success('Timetable period deleted.');
-        loadData();
-      } catch (err: any) {
-        toast.error(err?.message || 'Failed to delete timetable slot');
-      }
+  const handleDeleteTimetable = (id: string, subject: string, day: string, period: number) => {
+    setDeleteTimetableModal({ id, description: `Period ${period} (${subject}) on ${day}` });
+  };
+
+  const confirmDeleteTimetable = async () => {
+    if (!deleteTimetableModal) return;
+    try {
+      await deleteClassTimetableEntry(deleteTimetableModal.id);
+      toast.success('Timetable period deleted.');
+      setDeleteTimetableModal(null);
+      loadData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete timetable slot');
     }
   };
 
@@ -420,7 +562,7 @@ function AdminDashboardPage() {
           exam_name: examForm.exam_name.trim(),
           class_id: examForm.class_id,
           subject: examForm.subject.trim(),
-          date: examForm.date,
+          date: parseDateToISO(examForm.date),
           time: examForm.time.trim(),
           duration: examForm.duration.trim(),
           full_marks: Number(examForm.full_marks) || 100,
@@ -434,7 +576,7 @@ function AdminDashboardPage() {
           exam_name: examForm.exam_name.trim(),
           class_id: examForm.class_id,
           subject: examForm.subject.trim(),
-          date: examForm.date,
+          date: parseDateToISO(examForm.date),
           time: examForm.time.trim(),
           duration: examForm.duration.trim(),
           full_marks: Number(examForm.full_marks) || 100,
@@ -454,15 +596,19 @@ function AdminDashboardPage() {
     }
   };
 
-  const handleDeleteExam = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete the scheduled exam "${name}"?`)) {
-      try {
-        await deleteScheduledExam(id);
-        toast.success('Exam deleted successfully.');
-        loadData();
-      } catch (err: any) {
-        toast.error(err.message || 'Failed to delete exam');
-      }
+  const handleDeleteExam = (id: string, name: string) => {
+    setDeleteExamModal({ id, name });
+  };
+
+  const confirmDeleteExam = async () => {
+    if (!deleteExamModal) return;
+    try {
+      await deleteScheduledExam(deleteExamModal.id);
+      toast.success('Exam deleted successfully.');
+      setDeleteExamModal(null);
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete exam');
     }
   };
 
@@ -474,8 +620,8 @@ function AdminDashboardPage() {
   const filteredAttendance = attendanceRecords.filter((rec) => {
     if (attClassId && rec.class_id !== attClassId) return false;
     if (attSectionId && rec.section_id !== attSectionId) return false;
-    if (attStartDate && rec.date < attStartDate) return false;
-    if (attEndDate && rec.date > attEndDate) return false;
+    if (attStartDate && rec.date < parseDateToISO(attStartDate)) return false;
+    if (attEndDate && rec.date > parseDateToISO(attEndDate)) return false;
     if (attStudentSearch) {
       const query = attStudentSearch.toLowerCase();
       const matchName = rec.student_name?.toLowerCase().includes(query);
@@ -505,11 +651,14 @@ function AdminDashboardPage() {
       }
 
       if (editingStudent) {
-        await updateStudent(editingStudent.id, {
+        const updated = await updateStudent(editingStudent.id, {
           ...studentForm,
           avatar_url,
         });
         toast.success('Student updated successfully!');
+        if (viewingStudentDetails?.id === editingStudent.id) {
+          setViewingStudentDetails(updated);
+        }
       } else {
         await addStudent({
           ...studentForm,
@@ -523,6 +672,47 @@ function AdminDashboardPage() {
       loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to save student');
+    }
+  };
+
+  // Open Edit Parent & Contact Info Modal
+  const openEditParentInfoModal = (st: Student) => {
+    setParentInfoForm({
+      father_name: st.father_name || '',
+      father_occupation: st.father_occupation || '',
+      mother_name: st.mother_name || '',
+      mother_occupation: st.mother_occupation || '',
+      phone: st.phone || '',
+      alt_phone: st.alt_phone || '',
+      email: st.email || '',
+      address: st.address || '',
+      aadhar_number: st.aadhar_number || '',
+    });
+    setShowParentInfoModal(true);
+  };
+
+  // Save Parent & Contact Info
+  const handleSaveParentInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!viewingStudentDetails) return;
+    try {
+      const updated = await updateStudent(viewingStudentDetails.id, {
+        father_name: parentInfoForm.father_name.trim(),
+        father_occupation: parentInfoForm.father_occupation.trim(),
+        mother_name: parentInfoForm.mother_name.trim(),
+        mother_occupation: parentInfoForm.mother_occupation.trim(),
+        phone: parentInfoForm.phone.trim(),
+        alt_phone: parentInfoForm.alt_phone.trim(),
+        email: parentInfoForm.email.trim(),
+        address: parentInfoForm.address.trim(),
+        aadhar_number: parentInfoForm.aadhar_number.trim(),
+      });
+      setViewingStudentDetails(updated);
+      setShowParentInfoModal(false);
+      toast.success('Parent & Contact Information updated successfully!');
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update parent information');
     }
   };
 
@@ -569,22 +759,35 @@ function AdminDashboardPage() {
     }
   };
 
-  // Handle Save Teacher
+  // Handle Save Teacher (Requires only Name and Mobile Number)
   const handleSaveTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const newProf = await addProfile({
-        full_name: teacherForm.full_name,
-        email: teacherForm.email,
-        phone: teacherForm.phone,
-        role: 'teacher',
-      });
-
-      if (teacherForm.assigned_class_id && teacherForm.assigned_section_id) {
-        await assignTeacherToClass(newProf.id, teacherForm.assigned_class_id, teacherForm.assigned_section_id);
+      const trimmedName = teacherForm.full_name.trim();
+      if (!trimmedName) {
+        toast.error('Please enter the teacher\'s full name.');
+        return;
       }
 
-      toast.success('Teacher account created successfully!');
+      const cleanPhone = teacherForm.phone.replace(/\D/g, '');
+      if (cleanPhone.length < 10) {
+        toast.error('Please enter a valid 10-digit mobile number.');
+        return;
+      }
+
+      // Email is optional - store 'NA' if no email is entered
+      const teacherEmail = teacherForm.email?.trim() || 'NA';
+      const defaultPassword = generateTeacherDefaultPassword(trimmedName);
+
+      const newProf = await addProfile({
+        full_name: trimmedName,
+        email: teacherEmail,
+        phone: cleanPhone,
+        role: 'teacher',
+        portal_password: defaultPassword,
+      });
+
+      toast.success(`Teacher account created for ${trimmedName}! Default Password: ${defaultPassword}`);
       setShowTeacherModal(false);
       setTeacherForm({
         full_name: '',
@@ -592,12 +795,77 @@ function AdminDashboardPage() {
         phone: '',
         employee_id: '',
         qualification: '',
-        assigned_class_id: classes[0]?.id || '',
-        assigned_section_id: sections[0]?.id || '',
       });
       loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to create teacher account');
+    }
+  };
+
+  // Handle Delete Teacher Confirmation
+  const confirmDeleteTeacher = async () => {
+    if (!deleteTeacherModal) return;
+    try {
+      await deleteProfile(deleteTeacherModal.id);
+      toast.success('Teacher account deleted successfully.');
+      setDeleteTeacherModal(null);
+      if (viewingTeacherDetails?.id === deleteTeacherModal.id) {
+        setViewingTeacherDetails(null);
+      }
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete teacher account');
+    }
+  };
+
+  // Open Edit Teacher Modal
+  const openEditTeacherModal = (t: Profile) => {
+    setEditingTeacherData(t);
+    setTeacherPhotoFile(null);
+    setTeacherEditForm({
+      full_name: t.full_name || '',
+      email: isSyntheticEmail(t.email, t.phone) ? '' : (t.email || ''),
+      phone: t.phone || '',
+      address: t.address || '',
+      qualification: t.qualification || '',
+      specialized_subject: t.specialized_subject || '',
+      aadhar_number: t.aadhar_number || '',
+      avatar_url: t.avatar_url || '',
+    });
+    setShowEditTeacherModal(true);
+  };
+
+  // Save Teacher Details Edit
+  const handleSaveTeacherEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTeacherData) return;
+    try {
+      let avatar_url = editingTeacherData.avatar_url;
+      if (teacherPhotoFile) {
+        avatar_url = await uploadProfilePhoto(teacherPhotoFile, 'teachers');
+      }
+
+      const updated = await updateProfile(editingTeacherData.id, {
+        full_name: teacherEditForm.full_name.trim(),
+        email: (isSyntheticEmail(teacherEditForm.email, teacherEditForm.phone) || !teacherEditForm.email.trim()) ? 'NA' : teacherEditForm.email.trim(),
+        phone: teacherEditForm.phone.trim(),
+        address: teacherEditForm.address.trim(),
+        qualification: teacherEditForm.qualification.trim(),
+        specialized_subject: teacherEditForm.specialized_subject.trim(),
+        aadhar_number: teacherEditForm.aadhar_number.trim(),
+        avatar_url,
+      });
+
+      if (viewingTeacherDetails?.id === editingTeacherData.id) {
+        setViewingTeacherDetails(updated);
+      }
+      setShowEditTeacherModal(false);
+      setEditingTeacherData(null);
+      setTeacherPhotoFile(null);
+      toast.success('Teacher details updated successfully!');
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update teacher details');
     }
   };
 
@@ -688,6 +956,7 @@ function AdminDashboardPage() {
               { id: 'overview', label: 'Overview', icon: Layers },
               { id: 'students', label: `Students (${students.length})`, icon: GraduationCap },
               { id: 'teachers', label: `Teachers (${teachers.length})`, icon: UserCheck },
+              { id: 'subjects', label: `Subjects (${subjects.length})`, icon: BookOpen },
               { id: 'attendance', label: 'Attendance & Export', icon: FileSpreadsheet },
               { id: 'timetable', label: `Class Routine (${classTimetables.length})`, icon: Clock },
               { id: 'exams', label: `Exams & Timetables (${scheduledExams.length})`, icon: Calendar },
@@ -922,11 +1191,13 @@ function AdminDashboardPage() {
                 <button
                   onClick={() => {
                     setEditingStudent(null);
+                    setStudentPhotoFile(null);
                     setStudentForm({
-                      roll_number: String(students.length + 1).padStart(2, '0'),
+                      roll_number: '',
                       first_name: '',
                       last_name: '',
-                      date_of_birth: '2015-01-01',
+                      phone: '',
+                      date_of_birth: '',
                       gender: 'Male',
                       class_id: classes[0]?.id || '',
                       section_id: sections[0]?.id || '',
@@ -1022,11 +1293,19 @@ function AdminDashboardPage() {
                               first_name: st.first_name,
                               last_name: st.last_name,
                               phone: st.phone || '',
-                              date_of_birth: st.date_of_birth || '',
+                              date_of_birth: formatDateSlash(st.date_of_birth) || '',
                               gender: st.gender || 'Male',
                               class_id: st.class_id,
                               section_id: st.section_id,
                               status: st.status,
+                              father_name: st.father_name || '',
+                              father_occupation: st.father_occupation || '',
+                              mother_name: st.mother_name || '',
+                              mother_occupation: st.mother_occupation || '',
+                              alt_phone: st.alt_phone || '',
+                              email: st.email || '',
+                              address: st.address || '',
+                              aadhar_number: st.aadhar_number || '',
                             });
                             setShowStudentModal(true);
                           }}
@@ -1132,7 +1411,7 @@ function AdminDashboardPage() {
                             </p>
 
                             <p className="text-xs text-muted-foreground">
-                              Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong> • DOB: <strong className="text-foreground">{formatDateDDMMYYYY(st.date_of_birth) || 'N/A'}</strong> • Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • System ID: <span className="font-mono">{st.id}</span>
+                              Mobile: <strong className="text-foreground">{st.phone || 'Not set'}</strong> • DOB: <strong className="text-foreground">{formatDateDDMMYYYY(st.date_of_birth) || 'N/A'}</strong> • Gender: <strong className="text-foreground">{st.gender || 'Male'}</strong> • Aadhar: <strong className="text-foreground font-mono">{st.aadhar_number || 'Not provided'}</strong> • System ID: <span className="font-mono">{st.id}</span>
                             </p>
                           </div>
                         </div>
@@ -1233,12 +1512,22 @@ function AdminDashboardPage() {
                         </div>
 
                         <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
-                          <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-                            <Users className="size-5 text-emerald-600" />
-                            Parent, Guardian & Contact Information
-                          </h3>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                              <Users className="size-5 text-emerald-600" />
+                              Parent, Guardian & Contact Information
+                            </h3>
+                            <button
+                              type="button"
+                              onClick={() => openEditParentInfoModal(st)}
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-xs font-bold shadow-soft transition-colors self-start sm:self-auto cursor-pointer"
+                            >
+                              <Edit3 className="size-3.5" />
+                              Edit Contact & Parent Info
+                            </button>
+                          </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-2 border-t border-border/60">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 pt-2 border-t border-border/60">
                             {/* Father Information */}
                             <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
                               <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
@@ -1262,6 +1551,20 @@ function AdminDashboardPage() {
                               </p>
                               <p className="text-xs text-muted-foreground">
                                 Occupation: <strong className="text-foreground">{st.mother_occupation || 'Homemaker'}</strong>
+                              </p>
+                            </div>
+
+                            {/* Aadhar Card Number */}
+                            <div className="rounded-2xl bg-muted/30 p-4 space-y-1.5">
+                              <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                                Aadhar Card Number
+                              </span>
+                              <p className="text-sm font-mono font-bold text-foreground flex items-center gap-1.5">
+                                <ShieldCheck className="size-4 text-emerald-600 shrink-0" />
+                                {st.aadhar_number || 'Not provided'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Government ID Verification
                               </p>
                             </div>
 
@@ -1435,12 +1738,13 @@ function AdminDashboardPage() {
                       type="button"
                       onClick={() => {
                         setEditingStudent(null);
+                        setStudentPhotoFile(null);
                         setStudentForm({
-                          roll_number: String(students.length + 1).padStart(2, '0'),
+                          roll_number: '',
                           first_name: '',
                           last_name: '',
                           phone: '',
-                          date_of_birth: '2015-01-01',
+                          date_of_birth: '',
                           gender: 'Male',
                           class_id: filterClassId !== 'all' ? filterClassId : (classes[0]?.id || ''),
                           section_id: sections[0]?.id || '',
@@ -1461,6 +1765,7 @@ function AdminDashboardPage() {
                     <table className="w-full text-left text-sm">
                       <thead className="bg-muted/50 text-xs uppercase text-muted-foreground font-semibold border-b border-border">
                         <tr>
+                          <th className="px-4 py-4 text-center w-16">Sl No.</th>
                           <th className="px-6 py-4">Student</th>
                           <th className="px-6 py-4">Roll No.</th>
                           <th className="px-6 py-4">Class & Section</th>
@@ -1475,7 +1780,7 @@ function AdminDashboardPage() {
                           if (filtered.length === 0) {
                             return (
                               <tr>
-                                <td colSpan={6} className="px-6 py-8 text-center text-xs text-muted-foreground font-medium">
+                                <td colSpan={7} className="px-6 py-8 text-center text-xs text-muted-foreground font-medium">
                                   {students.length === 0
                                     ? 'No students registered yet. Click "Add Student" above to create your first student account.'
                                     : 'No students found in the selected class.'}
@@ -1483,8 +1788,11 @@ function AdminDashboardPage() {
                               </tr>
                             );
                           }
-                          return filtered.map((st) => (
+                          return filtered.map((st, index) => (
                             <tr key={st.id} className="hover:bg-muted/30 transition-colors">
+                              <td className="px-4 py-4 text-center font-mono font-bold text-xs text-muted-foreground">
+                                {index + 1}
+                              </td>
                               <td className="px-6 py-4 flex items-center gap-3">
                                 {st.avatar_url ? (
                                   <img
@@ -1558,82 +1866,597 @@ function AdminDashboardPage() {
         {/* TEACHERS TAB */}
         {activeTab === 'teachers' && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-foreground">Teacher Directory</h2>
-                <p className="text-xs text-muted-foreground">
-                  View and add authorized teachers and class assignments.
-                </p>
-              </div>
+            {viewingTeacherDetails ? (
+              /* FULL PAGE INDIVIDUAL TEACHER DETAILS VIEW */
+              (() => {
+                const t = viewingTeacherDetails;
+                const teacherDefaultPass = generateTeacherDefaultPassword(t.full_name);
+                const displayPassword = (!t.portal_password || t.portal_password.endsWith('@2011'))
+                  ? teacherDefaultPass
+                  : t.portal_password;
 
-              <button
-                type="button"
-                onClick={() => setShowTeacherModal(true)}
-                className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white shadow-soft hover:bg-amber-700 transition-colors"
-              >
-                <Plus className="size-4" />
-                Add Teacher Account
-              </button>
-            </div>
-
-            {teachers.length === 0 ? (
-              <div className="rounded-3xl border border-border bg-card p-10 text-center text-xs text-muted-foreground space-y-2">
-                <UserCheck className="size-8 text-amber-500 mx-auto" />
-                <p className="font-bold text-foreground text-sm">No Teachers Onboarded Yet</p>
-                <p>Click <strong className="text-amber-600 font-bold">"Add Teacher Account"</strong> above to onboard teachers and assign classes.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {teachers.map((t) => (
-                  <div key={t.id} className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
-                    <div className="flex items-center gap-3">
-                      {t.avatar_url ? (
-                        <img src={t.avatar_url} alt={t.full_name} className="size-12 rounded-full object-cover border" />
-                      ) : (
-                        <div className="grid size-12 place-items-center rounded-full bg-amber-500/10 text-amber-600 font-bold text-base">
-                          {t.full_name ? t.full_name.charAt(0) : 'T'}
-                        </div>
-                      )}
-                      <div>
-                        <h3 className="font-bold text-foreground leading-tight">{t.full_name}</h3>
-                        <p className="text-xs text-muted-foreground">{t.email}</p>
-                        <p className="text-xs text-amber-600 font-medium">{t.phone || 'No phone set'}</p>
-                      </div>
-                    </div>
-
-                    <div className="pt-2 border-t border-border/60 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Assigned Class:</span>
-                        <span className="font-bold text-foreground">Class 5 — Section A</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs bg-amber-50 dark:bg-amber-950/30 p-2 rounded-xl">
-                        <span className="text-amber-800 dark:text-amber-300 font-medium">Password:</span>
-                        <span className="font-mono font-bold text-amber-900 dark:text-amber-200">
-                          {t.portal_password || '********'}
-                        </span>
-                      </div>
+                return (
+                  <div className="space-y-8 animate-in fade-in duration-300">
+                    {/* Top Action Bar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <button
                         type="button"
-                        onClick={() => {
-                          const pass = t.portal_password || '';
-                          setPassModal({
-                            targetId: t.id,
-                            targetName: t.full_name,
-                            targetEmail: t.email,
-                            currentPass: pass,
-                          });
-                          setNewPassInput(pass);
-                        }}
-                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-input py-1.5 text-xs font-bold text-foreground hover:bg-accent transition-colors"
+                        onClick={() => setViewingTeacherDetails(null)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-input bg-card px-4 py-2.5 text-xs font-bold text-foreground hover:bg-accent transition-colors shadow-soft cursor-pointer"
                       >
-                        <Lock className="size-3.5" />
-                        Change Password
+                        <ArrowLeft className="size-4" />
+                        Back to Teacher Directory
                       </button>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTeacherModal({ id: t.id, name: t.full_name })}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-2.5 text-xs font-bold text-destructive hover:bg-destructive hover:text-white transition-colors shadow-soft cursor-pointer"
+                        >
+                          <Trash2 className="size-4" />
+                          Delete Teacher
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditTeacherModal(t)}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 px-4 py-2.5 text-xs font-bold text-white shadow-soft transition-colors cursor-pointer"
+                        >
+                          <Edit2 className="size-4" />
+                          Edit Teacher Details
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Teacher Profile Banner */}
+                    <div className="rounded-3xl border border-border bg-card p-6 md:p-8 shadow-soft">
+                      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                          <div className="relative group">
+                            {t.avatar_url ? (
+                              <img
+                                src={t.avatar_url}
+                                alt={t.full_name}
+                                className="size-20 rounded-3xl object-cover border-2 border-amber-500/30 shadow-md"
+                              />
+                            ) : (
+                              <div className="grid size-20 place-items-center rounded-3xl bg-amber-500/10 text-amber-600 font-bold text-2xl border border-amber-500/20 shadow-soft">
+                                {t.full_name ? t.full_name.charAt(0) : 'T'}
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openEditTeacherModal(t)}
+                              className="absolute -bottom-1 -right-1 size-7 rounded-xl bg-amber-600 text-white grid place-items-center shadow-md hover:bg-amber-700 transition-transform active:scale-90 cursor-pointer"
+                              title="Update Photo"
+                            >
+                              <Camera className="size-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <h2 className="text-xl md:text-2xl font-black text-foreground tracking-tight">
+                                {t.full_name}
+                              </h2>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-3 py-1 text-xs font-extrabold uppercase">
+                                <ShieldCheck className="size-3.5" />
+                                Teacher
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-3 py-1 text-xs font-extrabold uppercase">
+                                <CheckCircle className="size-3.5" />
+                                Active
+                              </span>
+                            </div>
+
+                            <p className="text-sm font-bold text-amber-700 dark:text-amber-400">
+                              Teacher ID: <span className="font-mono text-foreground font-extrabold">#{t.id}</span>
+                            </p>
+
+                            <p className="text-xs text-muted-foreground">
+                              Mobile: <strong className="text-foreground font-mono">{t.phone || 'Not set'}</strong> • Email: <span className="font-mono text-foreground">{formatDisplayEmail(t.email, t.phone)}</span> • Specialization: <strong className="text-foreground">{t.specialized_subject || 'General'}</strong>
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Verification Clearance Badge */}
+                        <div className="rounded-2xl border border-border bg-muted/20 p-5 text-center md:text-right shrink-0">
+                          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                            Faculty Clearance
+                          </span>
+                          <span className="text-lg font-bold text-amber-600 dark:text-amber-400 block mt-1">
+                            Verified Teacher
+                          </span>
+                          <span className="text-xs text-muted-foreground font-medium block">
+                            Attendance & Marks Authorization
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Teacher Details Cards Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* Card 1: Personal & Government Identification */}
+                      <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+                        <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <User className="size-4 text-amber-600" />
+                            Personal & Government Identity
+                          </h3>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="rounded-2xl bg-muted/30 p-3.5 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                              Aadhar Card Number
+                            </span>
+                            <p className="text-sm font-mono font-bold text-foreground flex items-center gap-1.5">
+                              <ShieldCheck className="size-4 text-emerald-600 shrink-0" />
+                              {t.aadhar_number || 'Not provided'}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">National Unique Identification</p>
+                          </div>
+
+                          <div className="rounded-2xl bg-muted/30 p-3.5 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                              Contact Mobile & Email
+                            </span>
+                            <p className="text-xs font-bold text-foreground flex items-center gap-1.5 font-mono">
+                              <Phone className="size-3.5 text-emerald-600 shrink-0" />
+                              {t.phone || 'Not provided'}
+                            </p>
+                            <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5 font-mono truncate">
+                              <Mail className="size-3.5 text-amber-600 shrink-0" />
+                              {formatDisplayEmail(t.email, t.phone)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl bg-muted/30 p-3.5 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                              Residential Address
+                            </span>
+                            <p className="text-xs text-foreground font-medium leading-relaxed">
+                              {t.address || 'Address not entered yet. Click "Edit Teacher Details" to add.'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card 2: Academic & Teaching Qualifications */}
+                      <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+                        <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <GraduationCap className="size-4 text-amber-600" />
+                            Academic & Teaching Credentials
+                          </h3>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="rounded-2xl bg-muted/30 p-3.5 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                              Educational Qualification
+                            </span>
+                            <p className="text-sm font-bold text-foreground">
+                              {t.qualification || 'Not provided'}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">e.g. M.Sc, M.A, B.Ed, D.El.Ed</p>
+                          </div>
+
+                          <div className="rounded-2xl bg-muted/30 p-3.5 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground block tracking-wider">
+                              Subject Specialization
+                            </span>
+                            <p className="text-sm font-bold text-amber-700 dark:text-amber-300">
+                              {t.specialized_subject || 'Not specified'}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">Primary teaching subject</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card 3: Portal Login & Security Credentials */}
+                      <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+                        <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <KeyRound className="size-4 text-amber-600" />
+                            Portal Credentials & Security
+                          </h3>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-3.5 border border-amber-200/50 dark:border-amber-900/50 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-amber-800 dark:text-amber-300 block tracking-wider">
+                              Login Username (Mobile)
+                            </span>
+                            <p className="text-sm font-mono font-bold text-amber-950 dark:text-amber-100">
+                              {t.phone || (formatDisplayEmail(t.email, t.phone) !== 'NA' ? t.email : t.id)}
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-3.5 border border-amber-200/50 dark:border-amber-900/50 space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-amber-800 dark:text-amber-300 block tracking-wider">
+                              Current Portal Password
+                            </span>
+                            <p className="text-sm font-mono font-bold text-amber-950 dark:text-amber-100">
+                              {displayPassword}
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPassModal({
+                                targetId: t.id,
+                                targetName: t.full_name,
+                                targetEmail: t.email,
+                                currentPass: displayPassword,
+                              });
+                              setNewPassInput(displayPassword);
+                            }}
+                            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white py-2.5 text-xs font-bold shadow-soft transition-colors cursor-pointer"
+                          >
+                            <Lock className="size-3.5" />
+                            Change Portal Password
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                ))}
+                );
+              })()
+            ) : (
+              <>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-foreground">Teacher Directory</h2>
+                    <p className="text-xs text-muted-foreground">
+                      View and add authorized teachers and class assignments.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowTeacherModal(true)}
+                    className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white shadow-soft hover:bg-amber-700 transition-colors"
+                  >
+                    <Plus className="size-4" />
+                    Add Teacher Account
+                  </button>
+                </div>
+
+            {/* TEACHER DIRECTORY TABLE */}
+            <div className="rounded-3xl border border-border bg-card shadow-soft overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground font-semibold border-b border-border">
+                    <tr>
+                      <th className="px-4 py-4 text-center w-16">Sl No.</th>
+                      <th className="px-6 py-4">Teacher</th>
+                      <th className="px-6 py-4">Teacher ID</th>
+                      <th className="px-6 py-4">Specialization</th>
+                      <th className="px-6 py-4">Portal Password</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {teachers.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-6 py-8 text-center text-xs text-muted-foreground font-medium">
+                          No teachers onboarded yet. Click "Add Teacher Account" above to onboard your first teacher.
+                        </td>
+                      </tr>
+                    ) : (
+                      teachers.map((t, index) => {
+                        const teacherDefaultPass = generateTeacherDefaultPassword(t.full_name);
+                        const displayPassword = (!t.portal_password || t.portal_password.endsWith('@2011'))
+                          ? teacherDefaultPass
+                          : t.portal_password;
+
+                        return (
+                          <tr key={t.id} className="hover:bg-muted/30 transition-colors">
+                            {/* SL NO */}
+                            <td className="px-4 py-4 text-center font-mono font-bold text-xs text-muted-foreground">
+                              {index + 1}
+                            </td>
+
+                            {/* TEACHER */}
+                            <td className="px-6 py-4 flex items-center gap-3">
+                              {t.avatar_url ? (
+                                <img
+                                  src={t.avatar_url}
+                                  alt={t.full_name}
+                                  className="size-10 rounded-full object-cover border border-amber-500/20 shrink-0"
+                                />
+                              ) : (
+                                <div className="grid size-10 place-items-center rounded-full bg-amber-500/10 text-amber-600 font-bold text-xs shrink-0">
+                                  {t.full_name ? t.full_name.charAt(0) : 'T'}
+                                </div>
+                              )}
+                              <div>
+                                <p className="font-bold text-foreground">{t.full_name}</p>
+                                <p className="text-[11px] text-muted-foreground">
+                                  Mobile: <strong className="text-foreground font-mono">{t.phone || 'Not set'}</strong> • Email: <span className="font-mono text-muted-foreground">{formatDisplayEmail(t.email, t.phone)}</span>
+                                </p>
+                              </div>
+                            </td>
+
+                            {/* TEACHER ID */}
+                            <td className="px-6 py-4 font-mono font-bold text-amber-600 dark:text-amber-400">
+                              #{t.id}
+                            </td>
+
+                            {/* SPECIALIZATION */}
+                            <td className="px-6 py-4 font-semibold text-foreground">
+                              {t.specialized_subject || 'General'}
+                            </td>
+
+                            {/* PORTAL PASSWORD */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/60 dark:border-amber-900/50 px-3 py-1 text-xs font-mono font-bold text-amber-900 dark:text-amber-200 shadow-2xs">
+                                <KeyRound className="size-3 text-amber-600" />
+                                {displayPassword}
+                              </span>
+                            </td>
+
+                            {/* STATUS */}
+                            <td className="px-6 py-4">
+                              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                <CheckCircle className="size-3" />
+                                active
+                              </span>
+                            </td>
+
+                            {/* ACTIONS */}
+                            <td className="px-6 py-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setViewingTeacherDetails(t)}
+                                  className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-600 hover:text-white transition-colors cursor-pointer shadow-2xs"
+                                  title="View Details"
+                                >
+                                  <Eye className="size-3.5" />
+                                  View Details
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPassModal({
+                                      targetId: t.id,
+                                      targetName: t.full_name,
+                                      targetEmail: t.email,
+                                      currentPass: displayPassword,
+                                    });
+                                    setNewPassInput(displayPassword);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-600 hover:text-white transition-colors cursor-pointer shadow-2xs"
+                                  title="Change Password"
+                                >
+                                  <Lock className="size-3.5" />
+                                  Change Password
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleteTeacherModal({ id: t.id, name: t.full_name })}
+                                  className="inline-flex items-center gap-1 rounded-xl border border-destructive/20 bg-destructive/10 px-2.5 py-1.5 text-xs font-bold text-destructive hover:bg-destructive hover:text-white transition-colors cursor-pointer"
+                                  title="Delete Teacher"
+                                >
+                                  <Trash2 className="size-3.5" />
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
               </div>
+            </div>
+              </>
             )}
+          </div>
+        )}
+
+        {/* SUBJECTS MANAGEMENT TAB (ADMIN ONLY) */}
+        {activeTab === 'subjects' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Header & Filter Controls */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <BookOpen className="size-5 text-primary" />
+                    School Curriculum & Subjects Directory
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Configure curriculum subjects, course codes, syllabus classification, and assign them across grade levels.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openCreateSubjectModal}
+                    className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all"
+                  >
+                    <Plus className="size-4" />
+                    Add New Subject
+                  </button>
+                </div>
+              </div>
+
+              {/* Filters */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-border/60">
+                {/* Search */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Search Subject / Code
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="e.g. Mathematics, BEN..."
+                      value={subjectSearch}
+                      onChange={(e) => setSubjectSearch(e.target.value)}
+                      className="w-full rounded-xl border border-input bg-background pl-8 pr-3 py-2 text-xs font-semibold text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                    <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+
+                {/* Class Filter */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Filter by Class
+                  </label>
+                  <select
+                    value={selectedSubjectClass}
+                    onChange={(e) => setSelectedSubjectClass(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="all">All Classes / Grades</option>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Category Filter */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Filter by Category
+                  </label>
+                  <select
+                    value={selectedSubjectCategory}
+                    onChange={(e) => setSelectedSubjectCategory(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="all">All Categories</option>
+                    {SUBJECT_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Subjects Grid */}
+            {(() => {
+              const filteredSubjects = subjects.filter((s) => {
+                const matchSearch =
+                  !subjectSearch ||
+                  s.name.toLowerCase().includes(subjectSearch.toLowerCase()) ||
+                  (s.code && s.code.toLowerCase().includes(subjectSearch.toLowerCase()));
+                const matchClass =
+                  selectedSubjectClass === 'all' ||
+                  !selectedSubjectClass ||
+                  s.class_id === 'all' ||
+                  s.class_id === selectedSubjectClass;
+                const matchCat =
+                  selectedSubjectCategory === 'all' ||
+                  !selectedSubjectCategory ||
+                  s.category === selectedSubjectCategory;
+                return matchSearch && matchClass && matchCat;
+              });
+
+              if (filteredSubjects.length === 0) {
+                return (
+                  <div className="rounded-3xl border border-border bg-card p-12 text-center shadow-soft space-y-3">
+                    <BookOpen className="size-10 text-muted-foreground/40 mx-auto" />
+                    <p className="text-sm font-semibold text-foreground">No subjects found</p>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      No subjects match the selected filters. You can add a new subject to the school curriculum anytime.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={openCreateSubjectModal}
+                      className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all mt-2"
+                    >
+                      <Plus className="size-4" />
+                      Add Subject Now
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredSubjects.map((sub) => {
+                    const categoryColors: Record<string, string> = {
+                      Academic: 'bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary-foreground border-primary/20',
+                      'Co-curricular / Activity': 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-800',
+                    };
+
+                    const catBadge = categoryColors[sub.category || 'Academic'] || 'bg-muted text-muted-foreground border-border';
+
+                    return (
+                      <div
+                        key={sub.id}
+                        className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-lift transition-all flex flex-col justify-between space-y-4"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-1">
+                              <h3 className="text-sm font-bold text-foreground leading-snug">
+                                {sub.name}
+                              </h3>
+                              {sub.code && (
+                                <span className="inline-block rounded-md bg-muted px-2 py-0.5 text-[10px] font-mono font-bold text-muted-foreground">
+                                  {sub.code}
+                                </span>
+                              )}
+                            </div>
+
+                            <span
+                              className={`rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase shrink-0 ${catBadge}`}
+                            >
+                              {sub.category || 'Core Academic'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 text-xs text-primary font-semibold">
+                            <GraduationCap className="size-3.5 shrink-0" />
+                            <span>{sub.class_name || (sub.class_id === 'all' ? 'All Classes' : 'Class')}</span>
+                          </div>
+
+                          {sub.description && (
+                            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                              {sub.description}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-3 border-t border-border">
+                          <button
+                            type="button"
+                            onClick={() => openEditSubjectModal(sub)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-input bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                          >
+                            <Edit2 className="size-3.5 text-muted-foreground" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteSubjectId(sub.id)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-900/40 bg-rose-50 dark:bg-rose-950/20 px-3 py-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition-colors"
+                          >
+                            <Trash2 className="size-3.5" />
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1707,11 +2530,10 @@ function AdminDashboardPage() {
                   <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
                     Start Date
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
+                    placeholder="DD/MM/YYYY"
                     value={attStartDate}
                     onChange={(e) => setAttStartDate(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
 
@@ -1719,11 +2541,10 @@ function AdminDashboardPage() {
                   <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
                     End Date
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
+                    placeholder="DD/MM/YYYY"
                     value={attEndDate}
                     onChange={(e) => setAttEndDate(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
 
@@ -1840,12 +2661,9 @@ function AdminDashboardPage() {
                     </span>
                     <button
                       type="button"
-                      onClick={async () => {
-                        await deleteNotice(n.id);
-                        toast.success('Notice deleted');
-                        loadData();
-                      }}
+                      onClick={() => setDeleteNoticeModal({ id: n.id, title: n.title })}
                       className="text-muted-foreground hover:text-destructive transition-colors p-1"
+                      title="Delete Notice"
                     >
                       <Trash2 className="size-4" />
                     </button>
@@ -1989,27 +2807,19 @@ function AdminDashboardPage() {
                       key={period.id}
                       className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
                     >
-                      {/* Top bar: Period Number & Timing */}
+                      {/* Top bar: Period Number */}
                       <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
                         <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
                           <Clock className="size-3.5" />
                           Period {period.period_number}
                         </span>
-
-                        <span className="text-xs font-mono font-bold text-foreground">
-                          {period.start_time} - {period.end_time}
-                        </span>
                       </div>
 
-                      {/* Middle: Subject & Room */}
-                      <div className="space-y-1.5">
+                      {/* Middle: Subject */}
+                      <div className="space-y-1">
                         <h4 className="text-base font-extrabold text-foreground tracking-tight">
                           {period.subject}
                         </h4>
-                        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                          <BookOpen className="size-3.5 text-primary shrink-0" />
-                          <span>Room: <strong>{period.room_number || 'General Classroom'}</strong></span>
-                        </p>
                       </div>
 
                       {/* Bottom bar: Teacher & Admin Actions */}
@@ -2259,10 +3069,68 @@ function AdminDashboardPage() {
         onCancel={() => setDeleteStudentId(null)}
       />
 
+      {/* CONFIRM DELETE TEACHER MODAL */}
+      <ConfirmDialog
+        isOpen={Boolean(deleteTeacherModal)}
+        title="Confirm Teacher Account Deletion"
+        description={`WARNING: You are about to remove the teacher account for "${deleteTeacherModal?.name}". This will also remove login access and class assignments. Are you sure you want to proceed?`}
+        confirmLabel="Yes, Delete Teacher"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteTeacher}
+        onCancel={() => setDeleteTeacherModal(null)}
+      />
+
+      {/* CONFIRM DELETE EXAM MODAL */}
+      <ConfirmDialog
+        isOpen={Boolean(deleteExamModal)}
+        title="Confirm Exam Deletion"
+        description={`WARNING: You are about to permanently remove the exam "${deleteExamModal?.name}". Are you sure you want to proceed?`}
+        confirmLabel="Yes, Delete Exam"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteExam}
+        onCancel={() => setDeleteExamModal(null)}
+      />
+
+      {/* CONFIRM DELETE NOTICE MODAL */}
+      <ConfirmDialog
+        isOpen={Boolean(deleteNoticeModal)}
+        title="Confirm Notice Deletion"
+        description={`WARNING: You are about to remove the notice "${deleteNoticeModal?.title}". Are you sure you want to proceed?`}
+        confirmLabel="Yes, Delete Notice"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={async () => {
+          if (!deleteNoticeModal) return;
+          try {
+            await deleteNotice(deleteNoticeModal.id);
+            toast.success('Notice deleted successfully.');
+            setDeleteNoticeModal(null);
+            loadData();
+          } catch (err: any) {
+            toast.error(err.message || 'Failed to delete notice');
+          }
+        }}
+        onCancel={() => setDeleteNoticeModal(null)}
+      />
+
+      {/* CONFIRM DELETE TIMETABLE SLOT MODAL */}
+      <ConfirmDialog
+        isOpen={Boolean(deleteTimetableModal)}
+        title="Confirm Timetable Slot Deletion"
+        description={`WARNING: You are about to remove ${deleteTimetableModal?.description}. Are you sure you want to proceed?`}
+        confirmLabel="Yes, Delete Slot"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteTimetable}
+        onCancel={() => setDeleteTimetableModal(null)}
+      />
+
       {/* STUDENT FORM MODAL */}
       {showStudentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="w-full max-w-lg rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4">
             <h3 className="text-lg font-bold text-foreground">
               {editingStudent ? 'Edit Student Details' : 'Add New Student'}
             </h3>
@@ -2298,14 +3166,13 @@ function AdminDashboardPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                  Date of Birth (DOB)
+                  Date of Birth (DOB) <span className="text-[10px] text-muted-foreground/80 font-normal lowercase">(dd/mm/yyyy)</span>
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   required
+                  placeholder="DD/MM/YYYY"
                   value={studentForm.date_of_birth}
                   onChange={(e) => setStudentForm({ ...studentForm, date_of_birth: e.target.value })}
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
 
@@ -2317,6 +3184,7 @@ function AdminDashboardPage() {
                   <input
                     type="text"
                     required
+                    placeholder="Enter Roll Number"
                     value={studentForm.roll_number}
                     onChange={(e) => setStudentForm({ ...studentForm, roll_number: e.target.value })}
                     className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
@@ -2375,6 +3243,124 @@ function AdminDashboardPage() {
                 </div>
               </div>
 
+              {/* PARENT, GUARDIAN & CONTACT DETAILS (EXPANDED SECTION) */}
+              <div className="pt-3 border-t border-border space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <Users className="size-3.5 text-emerald-600" />
+                  Parent & Guardian Information
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Father's Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Father's full name"
+                      value={studentForm.father_name}
+                      onChange={(e) => setStudentForm({ ...studentForm, father_name: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Father's Occupation
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Business, Teacher"
+                      value={studentForm.father_occupation}
+                      onChange={(e) => setStudentForm({ ...studentForm, father_occupation: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Mother's Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Mother's full name"
+                      value={studentForm.mother_name}
+                      onChange={(e) => setStudentForm({ ...studentForm, mother_name: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Mother's Occupation
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Homemaker, Teacher"
+                      value={studentForm.mother_occupation}
+                      onChange={(e) => setStudentForm({ ...studentForm, mother_occupation: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Student Aadhar Card Number
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={16}
+                      placeholder="12-digit Aadhar number"
+                      value={studentForm.aadhar_number}
+                      onChange={(e) => setStudentForm({ ...studentForm, aadhar_number: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Alternative Phone
+                    </label>
+                    <input
+                      type="tel"
+                      placeholder="Alternative mobile number"
+                      value={studentForm.alt_phone}
+                      onChange={(e) => setStudentForm({ ...studentForm, alt_phone: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Contact Email
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="Optional email address"
+                      value={studentForm.email}
+                      onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Residential Address
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Full residential address"
+                    value={studentForm.address}
+                    onChange={(e) => setStudentForm({ ...studentForm, address: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                  />
+                </div>
+              </div>
+
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button
                   type="button"
@@ -2395,48 +3381,212 @@ function AdminDashboardPage() {
         </div>
       )}
 
+      {/* EDIT PARENT & CONTACT INFORMATION MODAL */}
+      {showParentInfoModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Users className="size-5 text-emerald-600" />
+                <h3 className="text-base font-bold text-foreground">
+                  Edit Parent, Guardian & Contact Information
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowParentInfoModal(false)}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveParentInfo} className="space-y-4">
+              {/* Father's Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Father's Full Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter Father's Name"
+                    value={parentInfoForm.father_name}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, father_name: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Father's Occupation
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Business, Teacher, Farmer"
+                    value={parentInfoForm.father_occupation}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, father_occupation: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+              </div>
+
+              {/* Mother's Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Mother's Full Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter Mother's Name"
+                    value={parentInfoForm.mother_name}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, mother_name: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Mother's Occupation
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Homemaker, Teacher, Service"
+                    value={parentInfoForm.mother_occupation}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, mother_occupation: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+              </div>
+
+              {/* Contact Information */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Primary Mobile Phone (Login) *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="10-digit mobile number"
+                    value={parentInfoForm.phone}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, phone: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Alternative Phone Number
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="Optional alternate mobile"
+                    value={parentInfoForm.alt_phone}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, alt_phone: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Aadhar & Email Address */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Student Aadhar Card Number
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={16}
+                    placeholder="12-digit Aadhar number"
+                    value={parentInfoForm.aadhar_number}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, aadhar_number: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="name@example.com"
+                    value={parentInfoForm.email}
+                    onChange={(e) => setParentInfoForm({ ...parentInfoForm, email: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+              </div>
+
+              {/* Residential Address */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Residential Address
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Full residential address"
+                  value={parentInfoForm.address}
+                  onChange={(e) => setParentInfoForm({ ...parentInfoForm, address: e.target.value })}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowParentInfoModal(false)}
+                  className="rounded-xl border border-input px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-soft hover:bg-emerald-700 cursor-pointer"
+                >
+                  Save Information
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* TEACHER FORM MODAL */}
       {showTeacherModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
           <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4">
-            <h3 className="text-lg font-bold text-foreground">Create Teacher Account</h3>
+            <div>
+              <h3 className="text-lg font-bold text-foreground">Create Teacher Account</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Enter teacher's name and mobile number. The teacher will use this mobile number to log in.
+              </p>
+            </div>
             <form onSubmit={handleSaveTeacher} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                  Full Name
+                  Full Name *
                 </label>
                 <input
                   type="text"
                   required
+                  autoFocus
                   placeholder="e.g. Smt. Ananya Sen"
                   value={teacherForm.full_name}
                   onChange={(e) => setTeacherForm({ ...teacherForm, full_name: e.target.value })}
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground"
+                  className="w-full rounded-xl border border-input bg-background px-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                  Email
+                  Mobile Number *
                 </label>
                 <input
-                  type="email"
+                  type="tel"
                   required
-                  placeholder="teacher@rkvm.edu.in"
-                  value={teacherForm.email}
-                  onChange={(e) => setTeacherForm({ ...teacherForm, email: e.target.value })}
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                  Phone Number
-                </label>
-                <input
-                  type="text"
-                  placeholder="+91 98310 00000"
+                  maxLength={15}
+                  placeholder="10-digit mobile number"
                   value={teacherForm.phone}
                   onChange={(e) => setTeacherForm({ ...teacherForm, phone: e.target.value })}
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground"
+                  className="w-full rounded-xl border border-input bg-background px-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-mono"
                 />
               </div>
 
@@ -2444,15 +3594,185 @@ function AdminDashboardPage() {
                 <button
                   type="button"
                   onClick={() => setShowTeacherModal(false)}
-                  className="rounded-xl border border-input px-4 py-2 text-xs font-semibold text-foreground"
+                  className="rounded-xl border border-input px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-soft hover:bg-amber-700"
+                  className="rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-soft hover:bg-amber-700 cursor-pointer"
                 >
                   Create Teacher
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT TEACHER DETAILS MODAL (ADMIN) */}
+      {showEditTeacherModal && editingTeacherData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="size-5 text-amber-600" />
+                <h3 className="text-base font-bold text-foreground">
+                  Edit Teacher Details ({editingTeacherData.full_name})
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditTeacherModal(false)}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTeacherEdit} className="space-y-4">
+              {/* Photo Upload */}
+              <div className="flex items-center gap-4 p-3 rounded-2xl bg-muted/20 border border-border/60">
+                {teacherPhotoFile ? (
+                  <img
+                    src={URL.createObjectURL(teacherPhotoFile)}
+                    alt="Preview"
+                    className="size-16 rounded-2xl object-cover border border-amber-500/30 shrink-0"
+                  />
+                ) : teacherEditForm.avatar_url ? (
+                  <img
+                    src={teacherEditForm.avatar_url}
+                    alt="Current"
+                    className="size-16 rounded-2xl object-cover border border-amber-500/30 shrink-0"
+                  />
+                ) : (
+                  <div className="grid size-16 place-items-center rounded-2xl bg-amber-500/10 text-amber-600 font-bold text-xl shrink-0">
+                    {teacherEditForm.full_name ? teacherEditForm.full_name.charAt(0) : 'T'}
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-foreground">
+                    Profile Photo
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      if (e.target.files?.[0]) setTeacherPhotoFile(e.target.files[0]);
+                    }}
+                    className="text-xs text-muted-foreground file:mr-2 file:rounded-xl file:border-0 file:bg-amber-500/10 file:px-3 file:py-1 file:text-xs file:font-bold file:text-amber-700 dark:file:text-amber-300 hover:file:bg-amber-500/20 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={teacherEditForm.full_name}
+                    onChange={(e) => setTeacherEditForm({ ...teacherEditForm, full_name: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Mobile Number *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={teacherEditForm.phone}
+                    onChange={(e) => setTeacherEditForm({ ...teacherEditForm, phone: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Email Address (Optional)
+                  </label>
+                  <input
+                    type="email"
+                    value={teacherEditForm.email}
+                    onChange={(e) => setTeacherEditForm({ ...teacherEditForm, email: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-mono"
+                    placeholder="e.g. teacher@example.com (or leave blank for NA)"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Aadhar Card Number
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={16}
+                    placeholder="12-digit Aadhar number"
+                    value={teacherEditForm.aadhar_number}
+                    onChange={(e) => setTeacherEditForm({ ...teacherEditForm, aadhar_number: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Highest Qualification
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. M.Sc, M.A, B.Ed"
+                    value={teacherEditForm.qualification}
+                    onChange={(e) => setTeacherEditForm({ ...teacherEditForm, qualification: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Specialized Subject
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Mathematics, Science, Bengali"
+                    value={teacherEditForm.specialized_subject}
+                    onChange={(e) => setTeacherEditForm({ ...teacherEditForm, specialized_subject: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Residential Address
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Enter full residential address"
+                  value={teacherEditForm.address}
+                  onChange={(e) => setTeacherEditForm({ ...teacherEditForm, address: e.target.value })}
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowEditTeacherModal(false)}
+                  className="rounded-xl border border-input px-4 py-2 text-xs font-semibold text-foreground hover:bg-accent cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-soft hover:bg-amber-700 cursor-pointer"
+                >
+                  Save Teacher Details
                 </button>
               </div>
             </form>
@@ -2738,9 +4058,22 @@ function AdminDashboardPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Subject */}
                 <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Subject *
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase">
+                      Subject *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowExamModal(false);
+                        setActiveTab('subjects');
+                        openCreateSubjectModal();
+                      }}
+                      className="text-[11px] text-primary hover:underline font-semibold"
+                    >
+                      + Add New Subject
+                    </button>
+                  </div>
                   <input
                     type="text"
                     required
@@ -2749,6 +4082,26 @@ function AdminDashboardPage() {
                     placeholder="e.g. Mathematics"
                     className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
                   />
+                  {subjects.length > 0 && (
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setExamForm({ ...examForm, subject: e.target.value });
+                        }
+                      }}
+                      value={subjects.some(s => s.name === examForm.subject) ? examForm.subject : ''}
+                      className="mt-1.5 w-full rounded-xl border border-border bg-muted/40 px-3 py-1.5 text-xs text-foreground outline-none font-medium"
+                    >
+                      <option value="">-- Or Select from Dynamic Subjects ({subjects.length}) --</option>
+                      {subjects
+                        .filter((s) => s.class_id === 'all' || s.class_id === examForm.class_id)
+                        .map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name} {s.code ? `(${s.code})` : ''}
+                          </option>
+                        ))}
+                    </select>
+                  )}
                 </div>
 
                 {/* Full Marks */}
@@ -2772,14 +4125,13 @@ function AdminDashboardPage() {
                 {/* Date */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Exam Date *
+                    Exam Date * <span className="text-[10px] text-muted-foreground/80 font-normal lowercase">(dd/mm/yyyy)</span>
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     required
+                    placeholder="DD/MM/YYYY"
                     value={examForm.date}
                     onChange={(e) => setExamForm({ ...examForm, date: e.target.value })}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
                   />
                 </div>
 
@@ -2889,7 +4241,7 @@ function AdminDashboardPage() {
             </div>
 
             <form onSubmit={handleSaveTimetable} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Class */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
@@ -2911,7 +4263,7 @@ function AdminDashboardPage() {
                 {/* Day of Week */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Day of Week *
+                    Day *
                   </label>
                   <select
                     value={timetableForm.day_of_week}
@@ -2925,120 +4277,93 @@ function AdminDashboardPage() {
                     ))}
                   </select>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Period Number */}
+                {/* Period Dropdown (1 to 7) */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Period Number *
+                    Period (Max 7) *
                   </label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={10}
+                  <select
                     value={timetableForm.period_number}
                     onChange={(e) => setTimetableForm({ ...timetableForm, period_number: Number(e.target.value) || 1 })}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                  />
-                </div>
-
-                {/* Start Time */}
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Start Time *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={timetableForm.start_time}
-                    onChange={(e) => setTimetableForm({ ...timetableForm, start_time: e.target.value })}
-                    placeholder="e.g. 10:30 AM"
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                  />
-                </div>
-
-                {/* End Time */}
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    End Time *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={timetableForm.end_time}
-                    onChange={(e) => setTimetableForm({ ...timetableForm, end_time: e.target.value })}
-                    placeholder="e.g. 11:15 AM"
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                  />
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7].map((num) => (
+                      <option key={num} value={num}>
+                        Period {num}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Subject */}
+                {/* Subject Selection (Dynamic + Quick Add) */}
                 <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Subject Name *
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase">
+                      Subject Name *
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowTimetableModal(false);
+                        setActiveTab('subjects');
+                        openCreateSubjectModal();
+                      }}
+                      className="text-[11px] text-primary hover:underline font-semibold"
+                    >
+                      + Add New Subject
+                    </button>
+                  </div>
                   <input
                     type="text"
                     required
                     value={timetableForm.subject}
                     onChange={(e) => setTimetableForm({ ...timetableForm, subject: e.target.value })}
-                    placeholder="e.g. Mathematics, Bengali"
+                    placeholder="e.g. Mathematics, Tiffin Break"
                     className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
                   />
+                  {subjects.length > 0 && (
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setTimetableForm({ ...timetableForm, subject: e.target.value });
+                        }
+                      }}
+                      value={subjects.some(s => s.name === timetableForm.subject) ? timetableForm.subject : ''}
+                      className="mt-1.5 w-full rounded-xl border border-border bg-muted/40 px-3 py-1.5 text-xs text-foreground outline-none font-medium"
+                    >
+                      <option value="">-- Or Select from Dynamic Subjects ({subjects.length}) --</option>
+                      {subjects
+                        .filter((s) => s.class_id === 'all' || s.class_id === timetableForm.class_id)
+                        .map((s) => (
+                          <option key={s.id} value={s.name}>
+                            {s.name} {s.code ? `(${s.code})` : ''}
+                          </option>
+                        ))}
+                    </select>
+                  )}
                 </div>
 
-                {/* Assigned Teacher */}
+                {/* Assigned Teacher (Dropdown with NA as 1st option) */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
                     Assigned Teacher *
                   </label>
-                  <div className="space-y-1.5">
-                    <input
-                      type="text"
-                      required
-                      value={timetableForm.teacher_name}
-                      onChange={(e) => setTimetableForm({ ...timetableForm, teacher_name: e.target.value })}
-                      placeholder="e.g. Sourav Ganguly"
-                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                    />
-                    {teachers.length > 0 && (
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            setTimetableForm({ ...timetableForm, teacher_name: e.target.value });
-                          }
-                        }}
-                        value=""
-                        className="w-full rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground outline-none"
-                      >
-                        <option value="">-- Quick Select from Registered Teachers --</option>
-                        {teachers.map((t) => (
-                          <option key={t.id} value={t.full_name}>
-                            {t.full_name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
+                  <select
+                    value={timetableForm.teacher_name || 'NA'}
+                    onChange={(e) => setTimetableForm({ ...timetableForm, teacher_name: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    <option value="NA">NA (Not Assigned)</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.full_name}>
+                        {t.full_name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-              </div>
-
-              {/* Room Number */}
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                  Classroom / Room Number
-                </label>
-                <input
-                  type="text"
-                  value={timetableForm.room_number}
-                  onChange={(e) => setTimetableForm({ ...timetableForm, room_number: e.target.value })}
-                  placeholder="e.g. Room 101, Science Lab, Computer Lab"
-                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                />
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
@@ -3060,6 +4385,147 @@ function AdminDashboardPage() {
                     <Save className="size-4" />
                   )}
                   {editingTimetableEntry ? 'Update Period' : 'Save to Timetable'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE SUBJECT MODAL */}
+      <ConfirmDialog
+        isOpen={Boolean(deleteSubjectId)}
+        title="Confirm Subject Deletion"
+        description="Are you sure you want to remove this subject from the school curriculum? This action cannot be undone."
+        confirmLabel="Yes, Delete Subject"
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteSubject}
+        onCancel={() => setDeleteSubjectId(null)}
+      />
+
+      {/* ADD / EDIT SUBJECT MODAL (ADMIN ONLY) */}
+      {showSubjectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-lg rounded-3xl border border-border bg-card p-6 shadow-2xl space-y-5 text-card-foreground">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                <BookOpen className="size-5 text-primary" />
+                {editingSubject ? 'Edit Subject Details' : 'Add New Subject to Curriculum'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSubjectModal(false)}
+                className="size-8 rounded-xl grid place-items-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSubject} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Subject Name */}
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Subject Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={subjectForm.name}
+                    onChange={(e) => setSubjectForm({ ...subjectForm, name: e.target.value })}
+                    placeholder="e.g. Mathematics, Bengali"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
+
+                {/* Subject Code */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Subject Code
+                  </label>
+                  <input
+                    type="text"
+                    value={subjectForm.code}
+                    onChange={(e) => setSubjectForm({ ...subjectForm, code: e.target.value.toUpperCase() })}
+                    placeholder="e.g. MATH-01"
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Applicable Class */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Applicable Class *
+                  </label>
+                  <select
+                    value={subjectForm.class_id}
+                    onChange={(e) => setSubjectForm({ ...subjectForm, class_id: e.target.value })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    <option value="all">All Classes / Grades</option>
+                    {classes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Category */}
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                    Curriculum Category *
+                  </label>
+                  <select
+                    value={subjectForm.category}
+                    onChange={(e) => setSubjectForm({ ...subjectForm, category: e.target.value as SubjectCategory })}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                  >
+                    {SUBJECT_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Description / Syllabus Outline
+                </label>
+                <textarea
+                  rows={3}
+                  value={subjectForm.description}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, description: e.target.value })}
+                  placeholder="e.g. Topics, reference textbooks, assessment weightage..."
+                  className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowSubjectModal(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingSubject}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                >
+                  {savingSubject ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  {editingSubject ? 'Update Subject' : 'Save Subject'}
                 </button>
               </div>
             </form>

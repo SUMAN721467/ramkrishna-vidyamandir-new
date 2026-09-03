@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
-import { formatDateDDMMYYYY } from './format';
+import { formatDateDDMMYYYY, parseDateToISO, formatDateSlash } from './format';
 import type {
   Profile,
   SchoolClass,
@@ -12,10 +12,13 @@ import type {
   ClassTimetableEntry,
   DayOfWeek,
   UserRole,
+  Subject,
+  SubjectCategory,
 } from '../types/portal';
 
 // Initial Mock Seed Data for Instant Local Testing / Fallback
 const INITIAL_CLASSES: SchoolClass[] = [
+  { id: 'c0', name: 'Play' },
   { id: 'c1', name: 'LKG' },
   { id: 'c2', name: 'UKG' },
   { id: 'c3', name: 'Class 1' },
@@ -32,49 +35,49 @@ const INITIAL_CLASSES: SchoolClass[] = [
 
 const INITIAL_TIMETABLES: ClassTimetableEntry[] = [
   // Class 5 (c7) - Monday
-  { id: 'tt-1', class_id: 'c7', day_of_week: 'Monday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-2', class_id: 'c7', day_of_week: 'Monday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
-  { id: 'tt-3', class_id: 'c7', day_of_week: 'Monday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
-  { id: 'tt-4', class_id: 'c7', day_of_week: 'Monday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Science Lab' },
-  { id: 'tt-5', class_id: 'c7', day_of_week: 'Monday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'History & Geography', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-6', class_id: 'c7', day_of_week: 'Monday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Computer & Practical', teacher_name: 'Ranjan Banerjee', room_number: 'Computer Lab' },
+  { id: 'tt-1', class_id: 'c7', day_of_week: 'Monday', period_number: 1, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-2', class_id: 'c7', day_of_week: 'Monday', period_number: 2, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
+  { id: 'tt-3', class_id: 'c7', day_of_week: 'Monday', period_number: 3, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
+  { id: 'tt-4', class_id: 'c7', day_of_week: 'Monday', period_number: 4, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
+  { id: 'tt-5', class_id: 'c7', day_of_week: 'Monday', period_number: 5, subject: 'History (ইতিহাস)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-6', class_id: 'c7', day_of_week: 'Monday', period_number: 6, subject: 'Computer', teacher_name: 'Ranjan Banerjee' },
 
   // Class 5 (c7) - Tuesday
-  { id: 'tt-7', class_id: 'c7', day_of_week: 'Tuesday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
-  { id: 'tt-8', class_id: 'c7', day_of_week: 'Tuesday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-9', class_id: 'c7', day_of_week: 'Tuesday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
-  { id: 'tt-10', class_id: 'c7', day_of_week: 'Tuesday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
-  { id: 'tt-11', class_id: 'c7', day_of_week: 'Tuesday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'Physical Education & Yoga', teacher_name: 'Kallol Ghosh', room_number: 'Ground' },
-  { id: 'tt-12', class_id: 'c7', day_of_week: 'Tuesday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Drawing & Crafts', teacher_name: 'Priyanka Das', room_number: 'Art Room' },
+  { id: 'tt-7', class_id: 'c7', day_of_week: 'Tuesday', period_number: 1, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
+  { id: 'tt-8', class_id: 'c7', day_of_week: 'Tuesday', period_number: 2, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-9', class_id: 'c7', day_of_week: 'Tuesday', period_number: 3, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
+  { id: 'tt-10', class_id: 'c7', day_of_week: 'Tuesday', period_number: 4, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
+  { id: 'tt-11', class_id: 'c7', day_of_week: 'Tuesday', period_number: 5, subject: 'Physical Training / P.T.', teacher_name: 'Kallol Ghosh' },
+  { id: 'tt-12', class_id: 'c7', day_of_week: 'Tuesday', period_number: 6, subject: 'Drawing', teacher_name: 'Priyanka Das' },
 
   // Class 5 (c7) - Wednesday
-  { id: 'tt-13', class_id: 'c7', day_of_week: 'Wednesday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
-  { id: 'tt-14', class_id: 'c7', day_of_week: 'Wednesday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
-  { id: 'tt-15', class_id: 'c7', day_of_week: 'Wednesday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-16', class_id: 'c7', day_of_week: 'Wednesday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'Computer & Practical', teacher_name: 'Ranjan Banerjee', room_number: 'Computer Lab' },
-  { id: 'tt-17', class_id: 'c7', day_of_week: 'Wednesday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'History & Geography', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-18', class_id: 'c7', day_of_week: 'Wednesday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'General Knowledge & Values', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
+  { id: 'tt-13', class_id: 'c7', day_of_week: 'Wednesday', period_number: 1, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
+  { id: 'tt-14', class_id: 'c7', day_of_week: 'Wednesday', period_number: 2, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
+  { id: 'tt-15', class_id: 'c7', day_of_week: 'Wednesday', period_number: 3, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-16', class_id: 'c7', day_of_week: 'Wednesday', period_number: 4, subject: 'Computer', teacher_name: 'Ranjan Banerjee' },
+  { id: 'tt-17', class_id: 'c7', day_of_week: 'Wednesday', period_number: 5, subject: 'Geography (ভূগোল)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-18', class_id: 'c7', day_of_week: 'Wednesday', period_number: 6, subject: 'General Knowledge / G.K. (সাধারণ জ্ঞান)', teacher_name: 'Anupam Roy' },
 
   // Class 5 (c7) - Thursday
-  { id: 'tt-19', class_id: 'c7', day_of_week: 'Thursday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-20', class_id: 'c7', day_of_week: 'Thursday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
-  { id: 'tt-21', class_id: 'c7', day_of_week: 'Thursday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
-  { id: 'tt-22', class_id: 'c7', day_of_week: 'Thursday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
-  { id: 'tt-23', class_id: 'c7', day_of_week: 'Thursday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'Environmental Studies', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-24', class_id: 'c7', day_of_week: 'Thursday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Library & Reading', teacher_name: 'Debashis Mukherjee', room_number: 'Library' },
+  { id: 'tt-19', class_id: 'c7', day_of_week: 'Thursday', period_number: 1, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-20', class_id: 'c7', day_of_week: 'Thursday', period_number: 2, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
+  { id: 'tt-21', class_id: 'c7', day_of_week: 'Thursday', period_number: 3, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
+  { id: 'tt-22', class_id: 'c7', day_of_week: 'Thursday', period_number: 4, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
+  { id: 'tt-23', class_id: 'c7', day_of_week: 'Thursday', period_number: 5, subject: 'Environmental Studies / EVS (পরিবেশ শিক্ষা)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-24', class_id: 'c7', day_of_week: 'Thursday', period_number: 6, subject: 'Spoken English', teacher_name: 'Debashis Mukherjee' },
 
   // Class 5 (c7) - Friday
-  { id: 'tt-25', class_id: 'c7', day_of_week: 'Friday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Mathematics', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
-  { id: 'tt-26', class_id: 'c7', day_of_week: 'Friday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'English (2nd Language)', teacher_name: 'Debashis Mukherjee', room_number: 'Room 101' },
-  { id: 'tt-27', class_id: 'c7', day_of_week: 'Friday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'General Science', teacher_name: 'Anupam Roy', room_number: 'Room 101' },
-  { id: 'tt-28', class_id: 'c7', day_of_week: 'Friday', period_number: 4, start_time: '01:15 PM', end_time: '02:00 PM', time_slot: '01:15 PM - 02:00 PM', subject: 'Bengali (1st Language)', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-29', class_id: 'c7', day_of_week: 'Friday', period_number: 5, start_time: '02:00 PM', end_time: '02:45 PM', time_slot: '02:00 PM - 02:45 PM', subject: 'History & Geography', teacher_name: 'Subrata Sen', room_number: 'Room 101' },
-  { id: 'tt-30', class_id: 'c7', day_of_week: 'Friday', period_number: 6, start_time: '02:45 PM', end_time: '03:30 PM', time_slot: '02:45 PM - 03:30 PM', subject: 'Moral Education & Prayer', teacher_name: 'Subrata Sen', room_number: 'Prayer Hall' },
+  { id: 'tt-25', class_id: 'c7', day_of_week: 'Friday', period_number: 1, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
+  { id: 'tt-26', class_id: 'c7', day_of_week: 'Friday', period_number: 2, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
+  { id: 'tt-27', class_id: 'c7', day_of_week: 'Friday', period_number: 3, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
+  { id: 'tt-28', class_id: 'c7', day_of_week: 'Friday', period_number: 4, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-29', class_id: 'c7', day_of_week: 'Friday', period_number: 5, subject: 'History (ইতিহাস)', teacher_name: 'Subrata Sen' },
+  { id: 'tt-30', class_id: 'c7', day_of_week: 'Friday', period_number: 6, subject: 'Sanskrit (সংস্কৃত)', teacher_name: 'Subrata Sen' },
 
   // Class 5 (c7) - Saturday
-  { id: 'tt-31', class_id: 'c7', day_of_week: 'Saturday', period_number: 1, start_time: '10:30 AM', end_time: '11:15 AM', time_slot: '10:30 AM - 11:15 AM', subject: 'Weekly Assessment & Quiz', teacher_name: 'Sourav Ganguly', room_number: 'Room 101' },
-  { id: 'tt-32', class_id: 'c7', day_of_week: 'Saturday', period_number: 2, start_time: '11:15 AM', end_time: '12:00 PM', time_slot: '11:15 AM - 12:00 PM', subject: 'Music & Recitation', teacher_name: 'Priyanka Das', room_number: 'Music Room' },
-  { id: 'tt-33', class_id: 'c7', day_of_week: 'Saturday', period_number: 3, start_time: '12:00 PM', end_time: '12:45 PM', time_slot: '12:00 PM - 12:45 PM', subject: 'Games & Sports', teacher_name: 'Kallol Ghosh', room_number: 'Ground' },
+  { id: 'tt-31', class_id: 'c7', day_of_week: 'Saturday', period_number: 1, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
+  { id: 'tt-32', class_id: 'c7', day_of_week: 'Saturday', period_number: 2, subject: 'Music / Song', teacher_name: 'Priyanka Das' },
+  { id: 'tt-33', class_id: 'c7', day_of_week: 'Saturday', period_number: 3, subject: 'Physical Training / P.T.', teacher_name: 'Kallol Ghosh' },
 ];
 
 const INITIAL_SECTIONS: Section[] = [
@@ -87,14 +90,56 @@ export function generateDefaultPassword(name: string, dob?: string): string {
   const capitalized = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
 
   let year = '2011';
-  if (dob && dob.length >= 4) {
-    const extractedYear = dob.split('-')[0];
-    if (extractedYear && extractedYear.length === 4 && !isNaN(Number(extractedYear))) {
-      year = extractedYear;
+  if (dob && dob.trim()) {
+    const trimmed = dob.trim();
+    const fourDigitMatch = trimmed.match(/\b(19\d{2}|20\d{2})\b/);
+    if (fourDigitMatch) {
+      year = fourDigitMatch[1];
+    } else {
+      const parts = trimmed.split(/[-/]/);
+      for (const p of parts) {
+        if (p.length === 4 && !isNaN(Number(p))) {
+          year = p;
+          break;
+        }
+      }
     }
   }
 
   return `${capitalized}@${year}`;
+}
+
+export function generateTeacherDefaultPassword(name: string): string {
+  if (!name || !name.trim()) return 'Teacher@1234';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const prefixes = /^(smt\.?|shri\.?|sri\.?|mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?)$/i;
+  let word = parts[0];
+  if (parts.length > 1 && prefixes.test(word)) {
+    word = parts[1];
+  }
+  const clean = word.replace(/[^a-zA-Z0-9]/g, '');
+  const capitalized = clean ? clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase() : 'Teacher';
+  return `${capitalized}@1234`;
+}
+
+export function isSyntheticEmail(email?: string, phone?: string): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+  if (clean === 'na') {
+    return true;
+  }
+  if (phone && clean === `${phone.replace(/\D/g, '')}@rkvmschool.in`.toLowerCase()) {
+    return true;
+  }
+  return /^\d{7,}@rkvmschool\.in$/i.test(clean);
+}
+
+export function formatDisplayEmail(email?: string, phone?: string): string {
+  if (!email || !email.trim()) return 'NA';
+  const clean = email.trim();
+  if (clean.toUpperCase() === 'NA') return 'NA';
+  if (isSyntheticEmail(clean, phone)) return 'NA';
+  return clean;
 }
 
 const INITIAL_PROFILES: Profile[] = [
@@ -126,6 +171,27 @@ const INITIAL_NOTICES: Notice[] = [
   },
 ];
 
+const INITIAL_SUBJECTS: Subject[] = [
+  // Academic Subjects
+  { id: 'sub-1', name: 'Bengali (বাংলা)', code: 'BEN', class_id: 'all', category: 'Academic', description: 'Bengali language, literature, reading, and grammar.' },
+  { id: 'sub-2', name: 'English (ইংরেজি)', code: 'ENG', class_id: 'all', category: 'Academic', description: 'English grammar, vocabulary, reading comprehension, and writing.' },
+  { id: 'sub-3', name: 'Mathematics (গণিত)', code: 'MATH', class_id: 'all', category: 'Academic', description: 'Arithmetic, numerical logic, geometry, and mental math.' },
+  { id: 'sub-4', name: 'Environmental Studies / EVS (পরিবেশ শিক্ষা)', code: 'EVS', class_id: 'all', category: 'Academic', description: 'Environmental awareness, social living, and hygiene.' },
+  { id: 'sub-5', name: 'Science (বিজ্ঞান)', code: 'SCI', class_id: 'all', category: 'Academic', description: 'General science, nature observation, physical and life sciences.' },
+  { id: 'sub-6', name: 'General Knowledge / G.K. (সাধারণ জ্ঞান)', code: 'GK', class_id: 'all', category: 'Academic', description: 'General awareness, current events, heritage, and quiz.' },
+  { id: 'sub-7', name: 'History (ইতিহাস)', code: 'HIST', class_id: 'all', category: 'Academic', description: 'Indian and world history, civilisation, and cultural heritage.' },
+  { id: 'sub-8', name: 'Geography (ভূগোল)', code: 'GEO', class_id: 'all', category: 'Academic', description: 'Physical geography, environment, and world geography.' },
+  { id: 'sub-9', name: 'Computer', code: 'COMP', class_id: 'all', category: 'Academic', description: 'Computer fundamentals, practical usage, and typing skills.' },
+  { id: 'sub-10', name: 'Sanskrit (সংস্কৃত)', code: 'SANS', class_id: 'all', category: 'Academic', description: 'Classical Sanskrit language, grammar, shlokas, and pronunciation.' },
+
+  // Co-curricular / Activity Subjects
+  { id: 'sub-11', name: 'Drawing', code: 'DRAW', class_id: 'all', category: 'Co-curricular / Activity', description: 'Freehand sketching, colouring, crafts, and visual art.' },
+  { id: 'sub-12', name: 'Physical Training / P.T.', code: 'PT', class_id: 'all', category: 'Co-curricular / Activity', description: 'Drill, physical exercise, athletics, yoga, and games.' },
+  { id: 'sub-13', name: 'Music / Song', code: 'MUSIC', class_id: 'all', category: 'Co-curricular / Activity', description: 'Devotional songs, Rabindra Sangeet, prayer hymns, and choir.' },
+  { id: 'sub-14', name: 'Rhymes', code: 'RHY', class_id: 'all', category: 'Co-curricular / Activity', description: 'Rhythmic recitation, phonics, and expressive action rhymes.' },
+  { id: 'sub-15', name: 'Spoken English', code: 'SPOKEN', class_id: 'all', category: 'Co-curricular / Activity', description: 'Conversational fluency, phonetics, dialogue practice, and speech.' },
+];
+
 // Local Storage sync for demo/offline development mode ONLY
 class PortalStore {
   classes: SchoolClass[] = INITIAL_CLASSES;
@@ -139,6 +205,7 @@ class PortalStore {
   marks: StudentMark[] = [];
   exams: ScheduledExam[] = [];
   timetables: ClassTimetableEntry[] = INITIAL_TIMETABLES;
+  subjects: Subject[] = INITIAL_SUBJECTS;
 
   constructor() {
     if (typeof window !== 'undefined' && !isSupabaseConfigured) {
@@ -146,7 +213,15 @@ class PortalStore {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          this.classes = parsed.classes && parsed.classes.length > 0 ? parsed.classes : INITIAL_CLASSES;
+          if (parsed.classes && parsed.classes.length > 0) {
+            if (!parsed.classes.some((c: any) => c.name?.toLowerCase() === 'play')) {
+              this.classes = [{ id: 'c0', name: 'Play' }, ...parsed.classes];
+            } else {
+              this.classes = parsed.classes;
+            }
+          } else {
+            this.classes = INITIAL_CLASSES;
+          }
           this.sections = INITIAL_SECTIONS;
           this.profiles = parsed.profiles && parsed.profiles.length > 0 ? parsed.profiles : INITIAL_PROFILES;
           this.students = parsed.students || [];
@@ -157,6 +232,11 @@ class PortalStore {
           this.marks = parsed.marks || [];
           this.exams = parsed.exams || [];
           this.timetables = parsed.timetables && parsed.timetables.length > 0 ? parsed.timetables : INITIAL_TIMETABLES;
+          if (parsed.subjects && parsed.subjects.length > 0 && !parsed.subjects.some((s: any) => s.name === 'Bengali (1st Language)')) {
+            this.subjects = parsed.subjects;
+          } else {
+            this.subjects = INITIAL_SUBJECTS;
+          }
         } catch {
           // ignore parsing error
         }
@@ -181,6 +261,7 @@ class PortalStore {
           marks: this.marks,
           exams: this.exams,
           timetables: this.timetables,
+          subjects: this.subjects,
         })
       );
     }
@@ -193,14 +274,57 @@ export const store = new PortalStore();
 // DATA API SERVICES
 // ==========================================
 
+const CLASS_SORT_ORDER: Record<string, number> = {
+  play: 0,
+  lkg: 1,
+  ukg: 2,
+  'class 1': 3,
+  'class 2': 4,
+  'class 3': 5,
+  'class 4': 6,
+  'class 5': 7,
+  'class 6': 8,
+  'class 7': 9,
+  'class 8': 10,
+  'class 9': 11,
+  'class 10': 12,
+};
+
 export async function fetchClasses(): Promise<SchoolClass[]> {
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase.from('classes').select('*').order('name');
+    const { data, error } = await supabase.from('classes').select('*');
     if (error) {
       console.error('[Portal DB] Failed to fetch classes from Supabase:', error);
       throw new Error(`Failed to load classes: ${error.message}`);
     }
-    return data || [];
+    let list: SchoolClass[] = data ? [...data] : [];
+
+    // Guarantee 'Play' class exists even if Supabase was seeded prior to adding Play
+    if (!list.some((c) => c.name?.trim().toLowerCase() === 'play')) {
+      const playClass: SchoolClass = { id: 'c0', name: 'Play' };
+      list.unshift(playClass);
+
+      // Persist to Supabase in the background
+      supabase
+        .from('classes')
+        .upsert([playClass], { onConflict: 'id' })
+        .then(({ error: upsertErr }) => {
+          if (upsertErr) {
+            console.warn('[Portal DB] Auto-seed Play class to Supabase:', upsertErr.message);
+          }
+        });
+    }
+
+    return list.sort((a, b) => {
+      const orderA = CLASS_SORT_ORDER[a.name.toLowerCase()] ?? 99;
+      const orderB = CLASS_SORT_ORDER[b.name.toLowerCase()] ?? 99;
+      return orderA - orderB;
+    });
+  }
+
+  if (!store.classes.some((c) => c.name?.trim().toLowerCase() === 'play')) {
+    store.classes = [{ id: 'c0', name: 'Play' }, ...store.classes];
+    store.save();
   }
   return store.classes;
 }
@@ -274,58 +398,22 @@ export async function fetchStudents(classId?: string, sectionId?: string): Promi
   return result;
 }
 
-export async function fetchTeacherClasses(teacherId: string) {
+export async function clearTeacherClasses(): Promise<void> {
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase
-      .from('teacher_classes')
-      .select('*')
-      .eq('teacher_id', teacherId);
-
-    if (error) {
-      console.error('[Portal DB] Failed to fetch teacher classes from Supabase:', error);
-      throw new Error(`Failed to load teacher classes: ${error.message}`);
+    try {
+      await supabase.from('teacher_classes').delete().neq('class_id', '__all__');
+    } catch (e) {
+      console.warn('[Portal DB] Failed to clear teacher_classes:', e);
     }
-
-    const [classes, sections] = await Promise.all([fetchClasses(), fetchSections()]);
-    const classMap = new Map(classes.map((c) => [c.id, c.name]));
-    const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
-
-    if (data && data.length > 0) {
-      return data.map((tc: any) => ({
-        class_id: tc.class_id,
-        section_id: tc.section_id,
-        class_name: classMap.get(tc.class_id) || 'Class',
-        section_name: sectionMap.get(tc.section_id) || 'Section',
-      }));
-    }
-
-    // Fallback: If no specific teacher assignments exist, allow teacher to select any school class
-    return classes.flatMap((cls) =>
-      sections.map((sec) => ({
-        class_id: cls.id,
-        section_id: sec.id,
-        class_name: cls.name,
-        section_name: sec.name,
-      }))
-    );
   }
+  store.teacherAssignments = [];
+  store.save();
+}
 
-  const assignments = store.teacherAssignments.filter((ta) => ta.teacher_id === teacherId);
-  if (assignments.length > 0) {
-    return assignments.map((ta) => {
-      const cls = store.classes.find((c) => c.id === ta.class_id);
-      const sec = store.sections.find((s) => s.id === ta.section_id);
-      return {
-        class_id: ta.class_id,
-        section_id: ta.section_id,
-        class_name: cls?.name || 'Class 5',
-        section_name: sec?.name || 'Section A',
-      };
-    });
-  }
-
-  return store.classes.flatMap((cls) =>
-    store.sections.map((sec) => ({
+export async function fetchTeacherClasses(_teacherId?: string) {
+  const [classes, sections] = await Promise.all([fetchClasses(), fetchSections()]);
+  return classes.flatMap((cls) =>
+    sections.map((sec) => ({
       class_id: cls.id,
       section_id: sec.id,
       class_name: cls.name,
@@ -388,9 +476,13 @@ export async function fetchAttendance(filters: {
       .select('*')
       .order('date', { ascending: false });
 
-    if (filters.date) query = query.eq('date', filters.date);
-    if (filters.startDate) query = query.gte('date', filters.startDate);
-    if (filters.endDate) query = query.lte('date', filters.endDate);
+    const isoDate = filters.date ? parseDateToISO(filters.date) : undefined;
+    const isoStart = filters.startDate ? parseDateToISO(filters.startDate) : undefined;
+    const isoEnd = filters.endDate ? parseDateToISO(filters.endDate) : undefined;
+
+    if (isoDate) query = query.eq('date', isoDate);
+    if (isoStart) query = query.gte('date', isoStart);
+    if (isoEnd) query = query.lte('date', isoEnd);
     if (filters.classId) query = query.eq('class_id', filters.classId);
     if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
     if (filters.studentId) query = query.eq('student_id', filters.studentId);
@@ -426,9 +518,13 @@ export async function fetchAttendance(filters: {
   }
 
   let result = [...store.attendance];
-  if (filters.date) result = result.filter((a) => a.date === filters.date);
-  if (filters.startDate) result = result.filter((a) => a.date >= filters.startDate!);
-  if (filters.endDate) result = result.filter((a) => a.date <= filters.endDate!);
+  const isoDate = filters.date ? parseDateToISO(filters.date) : undefined;
+  const isoStart = filters.startDate ? parseDateToISO(filters.startDate) : undefined;
+  const isoEnd = filters.endDate ? parseDateToISO(filters.endDate) : undefined;
+
+  if (isoDate) result = result.filter((a) => a.date === isoDate || a.date === filters.date);
+  if (isoStart) result = result.filter((a) => a.date >= isoStart);
+  if (isoEnd) result = result.filter((a) => a.date <= isoEnd);
   if (filters.classId) result = result.filter((a) => a.class_id === filters.classId);
   if (filters.sectionId) result = result.filter((a) => a.section_id === filters.sectionId);
   if (filters.studentId) result = result.filter((a) => a.student_id === filters.studentId);
@@ -518,6 +614,7 @@ const VALID_STUDENT_COLUMNS = new Set([
   'mother_name',
   'mother_occupation',
   'address',
+  'aadhar_number',
   'portal_password',
   'avatar_url',
   'pending_avatar_url',
@@ -526,16 +623,6 @@ const VALID_STUDENT_COLUMNS = new Set([
   'created_at',
   'updated_at',
 ]);
-
-function sanitizeStudentPayload(obj: Record<string, any>): Record<string, any> {
-  const sanitized: Record<string, any> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (VALID_STUDENT_COLUMNS.has(key) && value !== undefined) {
-      sanitized[key] = value;
-    }
-  }
-  return sanitized;
-}
 
 const VALID_PROFILE_COLUMNS = new Set([
   'id',
@@ -547,9 +634,27 @@ const VALID_PROFILE_COLUMNS = new Set([
   'pending_avatar_url',
   'pending_avatar_status',
   'portal_password',
+  'address',
+  'qualification',
+  'specialized_subject',
+  'aadhar_number',
   'created_at',
   'updated_at',
 ]);
+
+function sanitizeStudentPayload(obj: Record<string, any>): Record<string, any> {
+  const sanitized: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (VALID_STUDENT_COLUMNS.has(key) && value !== undefined) {
+      if (key === 'date_of_birth' && typeof value === 'string' && value.trim()) {
+        sanitized[key] = parseDateToISO(value);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+  }
+  return sanitized;
+}
 
 function sanitizeProfilePayload(obj: Record<string, any>): Record<string, any> {
   const sanitized: Record<string, any> = {};
@@ -568,9 +673,37 @@ export async function addStudent(studentData: Omit<Student, 'id' | 'created_at'>
   const generatedPassword = studentData.portal_password || generateDefaultPassword(studentData.first_name, studentData.date_of_birth);
   const now = new Date().toISOString();
 
-  // Generate collision-free unique Student ID
-  const uniqueSuffix = Math.random().toString(36).substring(2, 7);
-  const newStudentId = `st-${Date.now()}-${uniqueSuffix}`;
+  // Generate clean sequential Student ID (e.g. Std-1, Std-2, Std-3)
+  let newStudentId = (studentData as any).id;
+  if (!newStudentId) {
+    if (isSupabaseConfigured) {
+      try {
+        const { data: existing } = await supabase.from('students').select('id');
+        let nextNum = 1;
+        if (existing && existing.length > 0) {
+          const nums = existing
+            .map((s) => {
+              const match = String(s.id).match(/^(?:Std|std|st)-?(\d+)$/i);
+              return match ? parseInt(match[1], 10) : 0;
+            })
+            .filter((n) => !isNaN(n) && n > 0);
+          nextNum = nums.length > 0 ? Math.max(...nums) + 1 : existing.length + 1;
+        }
+        newStudentId = `Std-${nextNum}`;
+      } catch {
+        newStudentId = `Std-${Date.now()}`;
+      }
+    } else {
+      const nums = store.students
+        .map((s) => {
+          const match = String(s.id).match(/^(?:Std|std|st)-?(\d+)$/i);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter((n) => !isNaN(n) && n > 0);
+      const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : store.students.length + 1;
+      newStudentId = `Std-${nextNum}`;
+    }
+  }
 
   const newStudent: Student = {
     ...studentData,
@@ -760,14 +893,53 @@ export async function deleteStudent(id: string): Promise<boolean> {
 }
 
 export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>): Promise<Profile> {
-  const generatedPassword = profileData.portal_password || generateDefaultPassword(profileData.full_name, '2011');
+  let generatedPassword = profileData.portal_password;
+  if (!generatedPassword) {
+    if (profileData.role === 'teacher') {
+      generatedPassword = generateTeacherDefaultPassword(profileData.full_name);
+    } else {
+      generatedPassword = generateDefaultPassword(profileData.full_name, '2011');
+    }
+  }
   const now = new Date().toISOString();
 
-  // Generate collision-free unique Profile ID
-  const uniqueSuffix = Math.random().toString(36).substring(2, 7);
-  const newId = profileData.role === 'teacher'
-    ? `t-${Date.now()}-${uniqueSuffix}`
-    : `u-${profileData.role}-${Date.now()}-${uniqueSuffix}`;
+  // Generate clean sequential Teacher ID (e.g. Tchr-1, Tchr-2) or clean role ID
+  let newId = (profileData as any).id;
+  if (!newId) {
+    if (profileData.role === 'teacher') {
+      if (isSupabaseConfigured) {
+        try {
+          const { data: existing } = await supabase.from('profiles').select('id').eq('role', 'teacher');
+          let nextNum = 1;
+          if (existing && existing.length > 0) {
+            const nums = existing
+              .map((p) => {
+                const match = String(p.id).match(/^(?:Tchr|tchr|t)-?(\d+)$/i);
+                return match ? parseInt(match[1], 10) : 0;
+              })
+              .filter((n) => !isNaN(n) && n > 0);
+            nextNum = nums.length > 0 ? Math.max(...nums) + 1 : existing.length + 1;
+          }
+          newId = `Tchr-${nextNum}`;
+        } catch {
+          newId = `Tchr-${Date.now()}`;
+        }
+      } else {
+        const teachers = store.profiles.filter((p) => p.role === 'teacher');
+        const nums = teachers
+          .map((p) => {
+            const match = String(p.id).match(/^(?:Tchr|tchr|t)-?(\d+)$/i);
+            return match ? parseInt(match[1], 10) : 0;
+          })
+          .filter((n) => !isNaN(n) && n > 0);
+        const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : teachers.length + 1;
+        newId = `Tchr-${nextNum}`;
+      }
+    } else {
+      const uniqueSuffix = Math.random().toString(36).substring(2, 7);
+      newId = `u-${profileData.role}-${Date.now()}-${uniqueSuffix}`;
+    }
+  }
 
   const newProf: Profile = {
     ...profileData,
@@ -790,6 +962,69 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
   store.profiles.push(newProf);
   store.save();
   return newProf;
+}
+
+export async function deleteProfile(id: string): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.from('profiles').delete().eq('id', id);
+    if (error) {
+      console.error('[Portal DB] Failed to delete profile:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+    return true;
+  }
+
+  const pIdx = store.profiles.findIndex((p) => p.id === id);
+  if (pIdx >= 0) {
+    store.profiles.splice(pIdx, 1);
+    store.save();
+  }
+  return true;
+}
+
+export async function updateProfile(id: string, updates: Partial<Profile>): Promise<Profile> {
+  const now = new Date().toISOString();
+  if (isSupabaseConfigured) {
+    const sanitized: Record<string, any> = { updated_at: now };
+    for (const [k, v] of Object.entries(updates)) {
+      if (VALID_PROFILE_COLUMNS.has(k) && v !== undefined) {
+        sanitized[k] = v;
+      }
+    }
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(sanitized)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.warn('[Portal DB] Full update error in Supabase, trying fallback core columns:', error);
+      const fallbackSanitized: Record<string, any> = { updated_at: now };
+      ['full_name', 'email', 'phone', 'avatar_url', 'portal_password'].forEach((col) => {
+        if (updates[col as keyof Profile] !== undefined) {
+          fallbackSanitized[col] = updates[col as keyof Profile];
+        }
+      });
+      await supabase.from('profiles').update(fallbackSanitized).eq('id', id);
+    }
+
+    const pIdx = store.profiles.findIndex((p) => p.id === id);
+    if (pIdx >= 0) {
+      store.profiles[pIdx] = { ...store.profiles[pIdx], ...updates, updated_at: now };
+      store.save();
+    }
+    return data || { ...store.profiles.find((p) => p.id === id)!, ...updates, id };
+  }
+
+  // Offline / Demo fallback
+  const pIdx = store.profiles.findIndex((p) => p.id === id);
+  if (pIdx >= 0) {
+    store.profiles[pIdx] = { ...store.profiles[pIdx], ...updates, updated_at: now };
+    store.save();
+    return store.profiles[pIdx];
+  }
+  throw new Error('Profile not found');
 }
 
 export async function updateUserPassword(targetId: string, newPassword: string): Promise<boolean> {
@@ -848,28 +1083,9 @@ export async function linkParentToStudent(parentId: string, studentId: string, r
   }
 }
 
-export async function assignTeacherToClass(teacherId: string, classId: string, sectionId: string) {
-  if (isSupabaseConfigured) {
-    const { error } = await supabase.from('teacher_classes').insert([{ teacher_id: teacherId, class_id: classId, section_id: sectionId }]);
-    if (error) {
-      console.error('[Portal DB] Failed to assign teacher to class in Supabase:', error);
-      throw new Error(`Failed to assign teacher to class: ${error.message}`);
-    }
-    return;
-  }
-
-  const exists = store.teacherAssignments.some(
-    (a) => a.teacher_id === teacherId && a.class_id === classId && a.section_id === sectionId
-  );
-  if (!exists) {
-    store.teacherAssignments.push({
-      id: `ta-${Date.now()}`,
-      teacher_id: teacherId,
-      class_id: classId,
-      section_id: sectionId,
-    });
-    store.save();
-  }
+export async function assignTeacherToClass(_teacherId?: string, _classId?: string, _sectionId?: string): Promise<void> {
+  // Not needed: Teachers have access to all classes across the school
+  return;
 }
 
 export async function fetchNotices(role?: UserRole): Promise<Notice[]> {
@@ -1491,5 +1707,194 @@ export async function deleteClassTimetableEntry(id: string): Promise<boolean> {
   }
   store.timetables = store.timetables.filter((e) => e.id !== id);
   store.save();
+  return true;
+}
+
+// ==========================================
+// Clean up any legacy subjects from local storage to ensure ONLY Supabase is used
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('rkvm_portal_subjects');
+  } catch {}
+}
+
+function sanitizeSubjectPayload(sub: Partial<Subject>): Record<string, any> {
+  const allowed = ['id', 'name', 'code', 'class_id', 'category', 'description', 'created_at', 'updated_at'];
+  const sanitized: Record<string, any> = {};
+  for (const key of allowed) {
+    if ((sub as any)[key] !== undefined) {
+      sanitized[key] = (sub as any)[key];
+    }
+  }
+  return sanitized;
+}
+
+export async function fetchSubjects(classId?: string): Promise<Subject[]> {
+  if (isSupabaseConfigured) {
+    let query = supabase.from('subjects').select('*');
+    if (classId && classId !== 'all') {
+      query = query.or(`class_id.eq.${classId},class_id.eq.all`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('[Supabase Error] fetchSubjects:', error);
+      if (error.message?.includes('schema cache') || error.code === '42P01') {
+        throw new Error("Supabase table 'public.subjects' not found. Please run the SQL query in Supabase SQL Editor to create it.");
+      }
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    const list: Subject[] = data || [];
+    const classes = await fetchClasses();
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+    classMap.set('all', 'All Classes');
+
+    return list
+      .map((s) => ({
+        ...s,
+        class_name: s.class_id ? classMap.get(s.class_id) || 'All Classes' : 'All Classes',
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Demo mode fallback only when Supabase is completely unconfigured in env
+  let result = store.subjects;
+  if (classId && classId !== 'all') {
+    result = result.filter((s) => s.class_id === classId || s.class_id === 'all');
+  }
+  const classMap = new Map(store.classes.map((c) => [c.id, c.name]));
+  classMap.set('all', 'All Classes');
+  return result
+    .map((s) => ({
+      ...s,
+      class_name: s.class_id ? classMap.get(s.class_id) || 'All Classes' : 'All Classes',
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function addSubject(subjectData: Partial<Subject>): Promise<Subject> {
+  const now = new Date().toISOString();
+
+  let newId = subjectData.id;
+  if (!newId) {
+    if (isSupabaseConfigured) {
+      try {
+        const { data: existing } = await supabase.from('subjects').select('id');
+        let nextNum = 1;
+        if (existing && existing.length > 0) {
+          const nums = existing
+            .map((s) => {
+              const match = String(s.id).match(/^sub-(\d+)$/);
+              return match ? parseInt(match[1], 10) : 0;
+            })
+            .filter((n) => !isNaN(n) && n > 0);
+          nextNum = nums.length > 0 ? Math.max(...nums) + 1 : existing.length + 1;
+        }
+        newId = `sub-${nextNum}`;
+      } catch {
+        newId = `sub-${Date.now()}`;
+      }
+    } else {
+      const nums = store.subjects
+        .map((s) => {
+          const match = String(s.id).match(/^sub-(\d+)$/);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter((n) => !isNaN(n) && n > 0);
+      const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : store.subjects.length + 1;
+      newId = `sub-${nextNum}`;
+    }
+  }
+
+  const newSubject: Subject = {
+    id: newId,
+    name: subjectData.name?.trim() || 'Untitled Subject',
+    code: subjectData.code?.trim().toUpperCase() || '',
+    class_id: subjectData.class_id || 'all',
+    category: subjectData.category || 'Academic',
+    description: subjectData.description?.trim() || '',
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    const sanitized = sanitizeSubjectPayload(newSubject);
+    const { data, error } = await supabase
+      .from('subjects')
+      .insert([sanitized])
+      .select()
+      .single();
+
+    if (error || !data) {
+      console.error('[Supabase Error] addSubject:', error);
+      if (error?.message?.includes('schema cache') || error?.code === '42P01') {
+        throw new Error("Supabase table 'public.subjects' not found. Please run the SQL query in Supabase SQL Editor to create it.");
+      }
+      throw new Error(`Database error: ${error?.message || 'Failed to create subject in Supabase.'}`);
+    }
+
+    const classes = await fetchClasses();
+    const cls = classes.find((c) => c.id === data.class_id);
+    return { ...data, class_name: data.class_id === 'all' ? 'All Classes' : cls?.name || 'All Classes' };
+  }
+
+  store.subjects.unshift(newSubject);
+  const cls = store.classes.find((c) => c.id === newSubject.class_id);
+  return { ...newSubject, class_name: newSubject.class_id === 'all' ? 'All Classes' : cls?.name || 'All Classes' };
+}
+
+export async function updateSubject(id: string, updates: Partial<Subject>): Promise<Subject> {
+  const now = new Date().toISOString();
+  const fullUpdates = {
+    ...updates,
+    updated_at: now,
+  };
+
+  if (isSupabaseConfigured) {
+    const sanitized = sanitizeSubjectPayload(fullUpdates);
+    const { data, error } = await supabase
+      .from('subjects')
+      .update(sanitized)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) {
+      console.error('[Supabase Error] updateSubject:', error);
+      if (error?.message?.includes('schema cache') || error?.code === '42P01') {
+        throw new Error("Supabase table 'public.subjects' not found. Please run the SQL query in Supabase SQL Editor to create it.");
+      }
+      throw new Error(`Database error: ${error?.message || 'Failed to update subject in Supabase.'}`);
+    }
+
+    const classes = await fetchClasses();
+    const cls = classes.find((c) => c.id === data.class_id);
+    return { ...data, class_name: data.class_id === 'all' ? 'All Classes' : cls?.name || 'All Classes' };
+  }
+
+  const idx = store.subjects.findIndex((s) => s.id === id);
+  if (idx >= 0) {
+    store.subjects[idx] = { ...store.subjects[idx], ...fullUpdates };
+    const cls = store.classes.find((c) => c.id === store.subjects[idx].class_id);
+    return { ...store.subjects[idx], class_name: store.subjects[idx].class_id === 'all' ? 'All Classes' : cls?.name || 'All Classes' };
+  }
+  throw new Error('Subject not found');
+}
+
+export async function deleteSubject(id: string): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.from('subjects').delete().eq('id', id);
+    if (error) {
+      console.error('[Supabase Error] deleteSubject:', error);
+      if (error.message?.includes('schema cache') || error.code === '42P01') {
+        throw new Error("Supabase table 'public.subjects' not found. Please run the SQL query in Supabase SQL Editor to create it.");
+      }
+      throw new Error(`Database error: ${error.message}`);
+    }
+    return true;
+  }
+
+  store.subjects = store.subjects.filter((s) => s.id !== id);
   return true;
 }

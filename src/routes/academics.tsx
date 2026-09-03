@@ -10,7 +10,7 @@ import { academicLevels } from "@/data/school";
 
 const title = "Academics & Curriculum — Ramkrishna Vidyamandir";
 const description =
-  "Bengali medium curriculum from LKG to Class X, teaching methodology, assessment pattern and the annual school calendar at Ramkrishna Vidyamandir.";
+  "Bengali medium curriculum from Play to Class X, teaching methodology, assessment pattern and the annual school calendar at Ramkrishna Vidyamandir.";
 
 export const Route = createFileRoute("/academics")({
   head: () => ({

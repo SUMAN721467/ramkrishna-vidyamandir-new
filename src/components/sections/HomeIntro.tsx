@@ -24,7 +24,7 @@ export function StatsSection() {
 }
 
 const aboutPoints = [
-  "Recognised Bengali medium school from LKG to Class X",
+  "Recognised Bengali medium school from Play to Class X",
   "Average of one teacher for every 26 students",
   "Scholarships and fee waivers for deserving students",
 ];
@@ -57,7 +57,7 @@ export function AboutPreview() {
           <p className="mt-6 text-base leading-relaxed text-muted-foreground">
             Ramkrishna Vidyamandir began in 1996 with sixty-two children and a simple conviction:
             that a child learns best in the language they dream in. Nearly three decades later we
-            teach over 1,200 students across LKG to Class X, blending disciplined academics with
+            teach over 1,200 students across Play to Class X, blending disciplined academics with
             music, sport and service.
           </p>
           <ul className="mt-6 space-y-3">

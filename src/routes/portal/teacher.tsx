@@ -18,10 +18,19 @@ import {
   Trash2,
   Edit2,
   X,
+  User,
+  GraduationCap,
+  ShieldCheck,
+  KeyRound,
+  Camera,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PortalHeader } from '../../components/portal/PortalHeader';
 import {
+  updateProfile,
+  generateTeacherDefaultPassword,
+  isSyntheticEmail,
+  formatDisplayEmail,
   fetchTeacherClasses,
   fetchStudents,
   fetchAttendance,
@@ -35,7 +44,10 @@ import {
   updateScheduledExam,
   deleteScheduledExam,
 } from '../../lib/portal-db';
-import { formatDateDDMMYYYY } from '../../lib/format';
+import { formatDateDDMMYYYY, formatDateSlash, parseDateToISO } from '../../lib/format';
+import { DateInput } from '../../components/ui/date-input';
+import { ConfirmDialog } from '../../components/portal/ConfirmDialog';
+import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
 import type { Student, AttendanceRecord, Notice, AttendanceStatus, StudentMark, ScheduledExam } from '../../types/portal';
 
@@ -44,7 +56,7 @@ export const Route = createFileRoute('/portal/teacher')({
 });
 
 function TeacherDashboardPage() {
-  const { user, profile, role, loading: authLoading } = useAuth();
+  const { user, profile, role, loading: authLoading, updateCurrentProfile } = useAuth();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -83,6 +95,7 @@ function TeacherDashboardPage() {
   const [scheduledExams, setScheduledExams] = useState<ScheduledExam[]>([]);
   const [showExamModal, setShowExamModal] = useState(false);
   const [editingExam, setEditingExam] = useState<ScheduledExam | null>(null);
+  const [deleteExamModal, setDeleteExamModal] = useState<{ id: string; name: string } | null>(null);
   const [examForm, setExamForm] = useState({
     exam_name: 'Unit Assessment 1 (2026)',
     class_id: '',
@@ -95,8 +108,68 @@ function TeacherDashboardPage() {
     instructions: 'Bring geometry box and black pen. Arrive 15 mins early.',
   });
 
-  // Active Tab: 'take' | 'marks' | 'exams' | 'history' | 'notices'
-  const [activeTab, setActiveTab] = useState<'take' | 'marks' | 'exams' | 'history' | 'notices'>('take');
+  // Active Tab: 'take' | 'marks' | 'exams' | 'history' | 'notices' | 'profile'
+  const [activeTab, setActiveTab] = useState<'take' | 'marks' | 'exams' | 'history' | 'notices' | 'profile'>('take');
+
+  // Teacher Profile Edit State
+  const [teacherProfileForm, setTeacherProfileForm] = useState({
+    full_name: '',
+    email: '',
+    phone: '',
+    address: '',
+    qualification: '',
+    specialized_subject: '',
+    aadhar_number: '',
+  });
+  const [teacherAvatarFile, setTeacherAvatarFile] = useState<File | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  // Sync profile data to form
+  useEffect(() => {
+    if (profile) {
+      setTeacherProfileForm({
+        full_name: profile.full_name || '',
+        email: isSyntheticEmail(profile.email, profile.phone) ? '' : (profile.email || ''),
+        phone: profile.phone || '',
+        address: profile.address || '',
+        qualification: profile.qualification || '',
+        specialized_subject: profile.specialized_subject || '',
+        aadhar_number: profile.aadhar_number || '',
+      });
+    }
+  }, [profile]);
+
+  // Handle Save Teacher Profile
+  const handleSaveTeacherProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile) return;
+    setSavingProfile(true);
+    try {
+      let avatar_url = profile.avatar_url;
+      if (teacherAvatarFile) {
+        avatar_url = await uploadProfilePhoto(teacherAvatarFile, 'teachers');
+      }
+
+      const updated = await updateProfile(profile.id, {
+        full_name: teacherProfileForm.full_name.trim(),
+        email: (isSyntheticEmail(teacherProfileForm.email, teacherProfileForm.phone) || !teacherProfileForm.email.trim()) ? 'NA' : teacherProfileForm.email.trim(),
+        phone: teacherProfileForm.phone.trim(),
+        address: teacherProfileForm.address.trim(),
+        qualification: teacherProfileForm.qualification.trim(),
+        specialized_subject: teacherProfileForm.specialized_subject.trim(),
+        aadhar_number: teacherProfileForm.aadhar_number.trim(),
+        avatar_url,
+      });
+
+      updateCurrentProfile(updated);
+      setTeacherAvatarFile(null);
+      toast.success('Your teacher profile details have been updated successfully!');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   // Protected route check
   useEffect(() => {
@@ -146,7 +219,7 @@ function TeacherDashboardPage() {
 
         // Fetch existing attendance records for this date/class/section
         const existingAtt = await fetchAttendance({
-          date: selectedDate,
+          date: parseDateToISO(selectedDate),
           classId: selectedClassId,
           sectionId: selectedSectionId,
         });
@@ -230,7 +303,7 @@ function TeacherDashboardPage() {
         student_id: st.id,
         class_id: selectedClassId,
         section_id: selectedSectionId,
-        date: selectedDate,
+        date: parseDateToISO(selectedDate),
         status: attendanceMap[st.id] || 'present',
         marked_by: user?.id || 'u-teacher-1',
       }));
@@ -240,7 +313,7 @@ function TeacherDashboardPage() {
 
       // Refresh recent records
       const updatedAtt = await fetchAttendance({
-        date: selectedDate,
+        date: parseDateToISO(selectedDate),
         classId: selectedClassId,
         sectionId: selectedSectionId,
       });
@@ -370,7 +443,7 @@ function TeacherDashboardPage() {
           exam_name: examForm.exam_name.trim(),
           class_id: examForm.class_id || selectedClassId,
           subject: examForm.subject.trim(),
-          date: examForm.date,
+          date: parseDateToISO(examForm.date),
           time: examForm.time.trim(),
           duration: examForm.duration.trim(),
           full_marks: Number(examForm.full_marks) || 100,
@@ -384,7 +457,7 @@ function TeacherDashboardPage() {
           exam_name: examForm.exam_name.trim(),
           class_id: examForm.class_id || selectedClassId,
           subject: examForm.subject.trim(),
-          date: examForm.date,
+          date: parseDateToISO(examForm.date),
           time: examForm.time.trim(),
           duration: examForm.duration.trim(),
           full_marks: Number(examForm.full_marks) || 100,
@@ -404,16 +477,16 @@ function TeacherDashboardPage() {
     }
   };
 
-  // Delete Exam
-  const handleDeleteExam = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete the exam schedule "${name}"?`)) {
-      try {
-        await deleteScheduledExam(id);
-        toast.success('Exam schedule deleted successfully.');
-        await loadClassExams();
-      } catch (err: any) {
-        toast.error(err.message || 'Failed to delete exam');
-      }
+  // Delete Exam Confirmation
+  const confirmDeleteExam = async () => {
+    if (!deleteExamModal) return;
+    try {
+      await deleteScheduledExam(deleteExamModal.id);
+      toast.success('Exam schedule deleted successfully.');
+      setDeleteExamModal(null);
+      await loadClassExams();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete exam');
     }
   };
 
@@ -496,6 +569,18 @@ function TeacherDashboardPage() {
               <Megaphone className="size-4" />
               Staff Notices ({notices.length})
             </button>
+
+            <button
+              onClick={() => setActiveTab('profile')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all whitespace-nowrap ${
+                activeTab === 'profile'
+                  ? 'bg-primary text-primary-foreground shadow-soft'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <User className="size-4" />
+              My Profile
+            </button>
           </div>
         </div>
       </div>
@@ -558,13 +643,12 @@ function TeacherDashboardPage() {
 
                 <div>
                   <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                    Attendance Date
+                    Attendance Date <span className="text-[10px] text-muted-foreground/80 font-normal lowercase">(dd/mm/yyyy)</span>
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
+                    placeholder="DD/MM/YYYY"
                     value={selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
 
@@ -1051,7 +1135,7 @@ function TeacherDashboardPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteExam(exam.id, exam.subject)}
+                          onClick={() => setDeleteExamModal({ id: exam.id, name: exam.subject })}
                           className="size-8 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
                           title="Delete Exam"
                         >
@@ -1198,14 +1282,13 @@ function TeacherDashboardPage() {
                       {/* Date */}
                       <div>
                         <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                          Date *
+                          Date * <span className="text-[10px] text-muted-foreground/80 font-normal lowercase">(dd/mm/yyyy)</span>
                         </label>
-                        <input
-                          type="date"
+                        <DateInput
                           required
+                          placeholder="DD/MM/YYYY"
                           value={examForm.date}
                           onChange={(e) => setExamForm({ ...examForm, date: e.target.value })}
-                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
                         />
                       </div>
 
@@ -1359,6 +1442,270 @@ function TeacherDashboardPage() {
             </div>
           </div>
         )}
+
+        {/* MY PROFILE TAB */}
+        {activeTab === 'profile' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Top Profile Banner */}
+            <div className="rounded-3xl border border-border bg-card p-6 md:p-8 shadow-soft">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
+                  <div className="relative group">
+                    {teacherAvatarFile ? (
+                      <img
+                        src={URL.createObjectURL(teacherAvatarFile)}
+                        alt="Preview"
+                        className="size-20 rounded-3xl object-cover border-2 border-primary/30 shadow-md"
+                      />
+                    ) : profile?.avatar_url ? (
+                      <img
+                        src={profile.avatar_url}
+                        alt={profile.full_name}
+                        className="size-20 rounded-3xl object-cover border-2 border-primary/30 shadow-md"
+                      />
+                    ) : (
+                      <div className="grid size-20 place-items-center rounded-3xl bg-primary/10 text-primary font-bold text-2xl border border-primary/20 shadow-soft">
+                        {profile?.full_name ? profile.full_name.charAt(0) : 'T'}
+                      </div>
+                    )}
+                    <label
+                      className="absolute -bottom-1 -right-1 size-7 rounded-xl bg-primary text-primary-foreground grid place-items-center shadow-md hover:bg-primary-dark transition-transform active:scale-90 cursor-pointer"
+                      title="Update Profile Photo"
+                    >
+                      <Camera className="size-3.5" />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.[0]) setTeacherAvatarFile(e.target.files[0]);
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="text-xl md:text-2xl font-black text-foreground tracking-tight">
+                        {profile?.full_name || 'Teacher Profile'}
+                      </h2>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold uppercase">
+                        <ShieldCheck className="size-3.5" />
+                        Teacher Account
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-3 py-1 text-xs font-extrabold uppercase">
+                        <CheckCircle2 className="size-3.5" />
+                        Active
+                      </span>
+                    </div>
+
+                    <p className="text-sm font-bold text-primary">
+                      {assignedClasses.length > 0 && (
+                        <span>{assignedClasses[0]?.class_name} — {assignedClasses[0]?.section_name} • </span>
+                      )}Faculty ID: <span className="font-mono text-foreground font-extrabold">#{profile?.id}</span>
+                    </p>
+
+                    <p className="text-xs text-muted-foreground">
+                      Mobile: <strong className="text-foreground font-mono">{profile?.phone || 'Not set'}</strong> • Email: <span className="font-mono text-foreground">{formatDisplayEmail(profile?.email, profile?.phone)}</span> • Specialization: <strong className="text-foreground">{profile?.specialized_subject || 'General'}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-muted/20 p-5 text-left sm:text-right shrink-0">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Staff Identity
+                  </span>
+                  <span className="text-lg font-bold text-primary block mt-1">
+                    Verified Educator
+                  </span>
+                  <span className="text-xs text-muted-foreground font-medium block">
+                    RKVM Teacher Directory
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Profile Form */}
+            <form onSubmit={handleSaveTeacherProfile} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Personal Information Card */}
+                <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+                  <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+                    <User className="size-4 text-primary" />
+                    <h3 className="text-sm font-bold text-foreground">Personal Details & Contact</h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Full Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={teacherProfileForm.full_name}
+                        onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, full_name: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Mobile Number (Login Phone) *
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        value={teacherProfileForm.phone}
+                        onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, phone: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Email Address (Optional)
+                      </label>
+                      <input
+                        type="email"
+                        value={teacherProfileForm.email}
+                        onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, email: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none font-mono"
+                        placeholder="e.g. teacher@example.com (or leave blank for NA)"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Aadhar Card Number
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          maxLength={16}
+                          placeholder="12-digit Aadhar number"
+                          value={teacherProfileForm.aadhar_number}
+                          onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, aadhar_number: e.target.value })}
+                          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none font-mono pl-8"
+                        />
+                        <ShieldCheck className="size-4 text-emerald-600 absolute left-2.5 top-2.5" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Residential Address
+                      </label>
+                      <textarea
+                        rows={3}
+                        placeholder="Enter your complete residential address"
+                        value={teacherProfileForm.address}
+                        onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, address: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none resize-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Professional Qualifications & Credentials Card */}
+                <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+                  <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+                    <GraduationCap className="size-4 text-primary" />
+                    <h3 className="text-sm font-bold text-foreground">Academic & Teaching Credentials</h3>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Highest Qualification
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. M.Sc (Mathematics), B.Ed, M.A"
+                        value={teacherProfileForm.qualification}
+                        onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, qualification: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Specialized Subject
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Mathematics, Bengali, Physical Science"
+                        value={teacherProfileForm.specialized_subject}
+                        onChange={(e) => setTeacherProfileForm({ ...teacherProfileForm, specialized_subject: e.target.value })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                      />
+                    </div>
+
+                    {/* Assigned Classes Preview */}
+                    <div className="rounded-2xl bg-muted/20 p-4 border border-border/60 space-y-2">
+                      <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider block">
+                        Assigned Teaching Classes
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {assignedClasses.map((ac) => (
+                          <span
+                            key={`${ac.class_id}_${ac.section_id}`}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-bold"
+                          >
+                            <BookOpen className="size-3" />
+                            {ac.class_name} — {ac.section_name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Portal Password Info */}
+                    <div className="rounded-2xl bg-muted/20 p-4 border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider block">
+                        Portal Login Password
+                      </span>
+                      <p className="text-xs font-mono font-bold text-foreground flex items-center gap-1.5">
+                        <KeyRound className="size-3.5 text-primary" />
+                        {profile?.portal_password || generateTeacherDefaultPassword(profile?.full_name || 'Teacher')}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Managed by School Administrator
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={savingProfile}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {savingProfile ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Profile Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* CONFIRM DELETE EXAM MODAL */}
+        <ConfirmDialog
+          isOpen={Boolean(deleteExamModal)}
+          title="Confirm Exam Schedule Deletion"
+          description={`WARNING: You are about to remove the scheduled exam "${deleteExamModal?.name}". Are you sure you want to proceed?`}
+          confirmLabel="Yes, Delete Exam"
+          cancelLabel="Cancel"
+          variant="danger"
+          onConfirm={confirmDeleteExam}
+          onCancel={() => setDeleteExamModal(null)}
+        />
       </main>
     </div>
   );

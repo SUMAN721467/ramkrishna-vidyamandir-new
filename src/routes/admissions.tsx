@@ -12,16 +12,16 @@ import { faqs } from "@/data/school";
 import { SCHOOL } from "@/data/site";
 
 const title = "Admissions 2027–28 — Ramkrishna Vidyamandir";
-const description =
-  "Admission process, eligibility, required documents and fee information for LKG to Class IX at Ramkrishna Vidyamandir, Keshiary.";
+const metaDescription =
+  "Admission process, eligibility, required documents and fee information for Play to Class IX at Ramkrishna Vidyamandir, Keshiary.";
 
 export const Route = createFileRoute("/admissions")({
   head: () => ({
     meta: [
-      { title },
-      { name: "description", content: description },
+      { title: "Admissions | Ramkrishna Vidyamandir Keshiary" },
+      { name: "description", content: metaDescription },
       { property: "og:title", content: title },
-      { property: "og:description", content: description },
+      { property: "og:description", content: metaDescription },
       { property: "og:type", content: "article" },
       { property: "og:url", content: "/admissions" },
     ],
@@ -33,11 +33,12 @@ export const Route = createFileRoute("/admissions")({
 const steps = [
   { id: "s1", icon: "FileText", title: "1. Collect the form", description: "Available at the school office or downloadable from this page during December and January." },
   { id: "s2", icon: "PenLine", title: "2. Submit documents", description: "Return the completed form with attested copies of all required documents." },
-  { id: "s3", icon: "MessagesSquare", title: "3. Interaction", description: "A short, friendly interaction with the child and guardians — no written entrance test for LKG and UKG." },
+  { id: "s3", icon: "MessagesSquare", title: "3. Interaction", description: "A short, friendly interaction with the child and guardians — no written entrance test for Play, LKG and UKG." },
   { id: "s4", icon: "BadgeCheck", title: "4. Confirmation", description: "Selected names are posted on the notice board; fees are paid at the office within a week." },
 ];
 
 const eligibility = [
+  "Play: minimum 2.5 years as on 1 January of the admission year",
   "LKG: minimum 3 years as on 1 January of the admission year",
   "UKG: minimum 4 years, or successful completion of LKG",
   "Class I: minimum 5 years, with a UKG transfer or completion certificate",
@@ -54,7 +55,7 @@ const documents = [
 ];
 
 const fees = [
-  { id: "f1", level: "LKG – UKG", admission: "₹ 2,500", monthly: "₹ 450" },
+  { id: "f1", level: "Play – UKG", admission: "₹ 2,500", monthly: "₹ 450" },
   { id: "f2", level: "Class I – IV", admission: "₹ 3,000", monthly: "₹ 550" },
   { id: "f3", level: "Class V – VIII", admission: "₹ 3,500", monthly: "₹ 700" },
   { id: "f4", level: "Class IX – X", admission: "₹ 4,000", monthly: "₹ 900" },
@@ -66,7 +67,7 @@ function AdmissionsPage() {
       <PageHero
         eyebrow="Admissions"
         title="Admissions open for the 2027–28 session"
-        description="LKG to Class IX. Forms are issued from the first week of December and close on 31 January."
+        description="Play to Class IX. Forms are issued from the first week of December and close on 31 January."
         image={heroStudents}
       />
 

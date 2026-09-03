@@ -36,6 +36,7 @@ import {
   rejectStudentPhotoChange,
   updateStudent,
   calculateGrade,
+  formatDisplayEmail,
 } from '../../lib/portal-db';
 import { formatDateDDMMYYYY } from '../../lib/format';
 import { uploadProfilePhoto } from '../../lib/storage';
@@ -562,7 +563,7 @@ export function StudentDashboardPage() {
                   Email & Address
                 </span>
                 <p className="text-xs font-semibold text-foreground truncate">
-                  {st.email || 'student@rkvmschool.in'}
+                  {formatDisplayEmail(st.email, st.phone)}
                 </p>
                 <p className="text-xs text-muted-foreground line-clamp-2">
                   {st.address || 'Address on school file'}
@@ -749,43 +750,35 @@ export function StudentDashboardPage() {
                   <table className="w-full text-left text-sm">
                     <thead className="bg-muted/50 text-[11px] uppercase text-muted-foreground font-semibold border-b border-border">
                       <tr>
-                        <th className="px-4 py-3">Day</th>
-                        <th className="px-4 py-3">Period</th>
-                        <th className="px-4 py-3">Time Slot</th>
-                        <th className="px-4 py-3">Subject</th>
-                        <th className="px-4 py-3">Assigned Teacher</th>
-                        <th className="px-4 py-3">Room</th>
+                        <th className="px-5 py-3.5">Day</th>
+                        <th className="px-5 py-3.5">Period</th>
+                        <th className="px-5 py-3.5">Subject</th>
+                        <th className="px-5 py-3.5">Assigned Teacher</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border text-xs">
                       {classTimetable.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                          <td colSpan={4} className="px-5 py-10 text-center text-muted-foreground">
                             No routine periods scheduled for this class yet.
                           </td>
                         </tr>
                       ) : (
                         classTimetable.map((entry) => (
                           <tr key={entry.id} className="hover:bg-muted/30 transition-colors">
-                            <td className="px-4 py-3 font-bold text-foreground">
+                            <td className="px-5 py-3.5 font-bold text-foreground">
                               <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-2.5 py-1 text-xs font-bold">
                                 {entry.day_of_week}
                               </span>
                             </td>
-                            <td className="px-4 py-3 font-mono font-bold text-primary">
+                            <td className="px-5 py-3.5 font-mono font-bold text-primary">
                               Period {entry.period_number}
                             </td>
-                            <td className="px-4 py-3 font-mono text-muted-foreground whitespace-nowrap">
-                              {entry.start_time} - {entry.end_time}
-                            </td>
-                            <td className="px-4 py-3 font-bold text-foreground">
+                            <td className="px-5 py-3.5 font-bold text-foreground">
                               {entry.subject}
                             </td>
-                            <td className="px-4 py-3 text-muted-foreground">
+                            <td className="px-5 py-3.5 text-muted-foreground font-medium">
                               {entry.teacher_name}
-                            </td>
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {entry.room_number || 'Classroom'}
                             </td>
                           </tr>
                         ))
@@ -826,32 +819,24 @@ export function StudentDashboardPage() {
                         key={period.id}
                         className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
                       >
-                        {/* Top: Period Badge & Time */}
+                        {/* Top: Period Badge */}
                         <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
                           <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
                             <Clock className="size-3.5" />
                             Period {period.period_number}
                           </span>
-
-                          <span className="text-xs font-mono font-bold text-foreground">
-                            {period.start_time} - {period.end_time}
-                          </span>
                         </div>
 
-                        {/* Middle: Subject & Room */}
-                        <div className="space-y-1.5">
+                        {/* Middle: Subject */}
+                        <div className="space-y-1">
                           <h4 className="text-base font-extrabold text-foreground tracking-tight">
                             {period.subject}
                           </h4>
-                          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                            <BookOpen className="size-3.5 text-primary shrink-0" />
-                            <span>Room: <strong>{period.room_number || 'General Classroom'}</strong></span>
-                          </p>
                         </div>
 
                         {/* Bottom: Teacher info */}
                         <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">Teacher:</span>
+                          <span className="text-muted-foreground font-medium">Teacher:</span>
                           <span className="font-bold text-foreground flex items-center gap-1.5">
                             <User className="size-3.5 text-muted-foreground" />
                             {period.teacher_name}

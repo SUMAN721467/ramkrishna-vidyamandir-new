@@ -176,6 +176,8 @@ Co-Education
 
 Academic Levels
 
+Play
+
 LKG
 
 UKG
@@ -273,6 +275,8 @@ Medium:
 Bengali Medium
 
 Classes
+
+Play
 
 LKG
 

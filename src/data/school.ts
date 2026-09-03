@@ -65,6 +65,14 @@ export const features: Feature[] = [
 
 export const academicLevels: AcademicLevel[] = [
   {
+    id: "play",
+    name: "Play",
+    classes: "Play Group / Pre-Nursery",
+    ageGroup: "Age 2.5 – 3.5 years",
+    description: "Joyful sensory activities, early rhymes, socialization, colours and motor skill development.",
+    icon: "Smile",
+  },
+  {
     id: "lkg",
     name: "LKG",
     classes: "Lower Kindergarten",

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { fetchProfiles, fetchStudents, store, addProfile, generateDefaultPassword } from '../lib/portal-db';
+import { fetchProfiles, fetchStudents, store, addProfile, generateDefaultPassword, generateTeacherDefaultPassword } from '../lib/portal-db';
 import type { Profile, Student, UserRole } from '../types/portal';
 
 interface AuthContextType {
@@ -12,6 +12,7 @@ interface AuthContextType {
   signUp: (email: string, pass: string, fullName: string, role: 'teacher' | 'parent') => Promise<{ success: boolean; role?: UserRole; error?: string }>;
   signOut: () => Promise<void>;
   switchDemoUser: (role: UserRole) => void;
+  updateCurrentProfile: (updated: Partial<Profile>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -219,8 +220,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Teacher / Staff Profile Check
       if (matchedProfile) {
-        const expectedPass = matchedProfile.portal_password;
-        if (expectedPass && pass === expectedPass) {
+        const defaultTeacherPass =
+          matchedProfile.role === 'teacher'
+            ? generateTeacherDefaultPassword(matchedProfile.full_name)
+            : undefined;
+        const expectedPass = matchedProfile.portal_password || defaultTeacherPass;
+        if (
+          expectedPass &&
+          (pass === expectedPass || pass.toLowerCase() === expectedPass.toLowerCase())
+        ) {
           const role: UserRole = matchedProfile.role;
           setUser({ id: matchedProfile.id, email: matchedProfile.email });
           setProfile(matchedProfile);
@@ -355,6 +363,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateCurrentProfile = (updated: Partial<Profile>) => {
+    setProfile((prev) => {
+      if (!prev) return null;
+      const next = { ...prev, ...updated };
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('rkvm_demo_user', JSON.stringify(next));
+      }
+      return next;
+    });
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -366,6 +385,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         signOut,
         switchDemoUser,
+        updateCurrentProfile,
       }}
     >
       {children}

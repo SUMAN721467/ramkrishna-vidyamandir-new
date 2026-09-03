@@ -23,7 +23,7 @@ export function CtaBanner() {
             Give your child a strong Bengali medium foundation
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-primary-foreground/80">
-            Applications for the 2027–28 session are now being accepted for LKG through Class IX.
+            Applications for the 2027–28 session are now being accepted for Play through Class IX.
             Visit the campus or speak with our admission desk today.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">

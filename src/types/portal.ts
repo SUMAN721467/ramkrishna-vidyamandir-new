@@ -14,6 +14,10 @@ export interface Profile {
   pending_avatar_url?: string;
   pending_avatar_status?: 'pending' | 'approved' | 'rejected';
   portal_password?: string;
+  address?: string;
+  qualification?: string;
+  specialized_subject?: string;
+  aadhar_number?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -52,6 +56,7 @@ export interface Student {
   mother_name?: string;
   mother_occupation?: string;
   address?: string;
+  aadhar_number?: string;
   portal_password?: string;
   created_at?: string;
   updated_at?: string;
@@ -175,9 +180,9 @@ export interface ClassTimetableEntry {
   id: string;
   class_id: string;
   day_of_week: DayOfWeek;
-  period_number: number;
-  start_time: string;
-  end_time: string;
+  period_number: number; // 1 to 7
+  start_time?: string;
+  end_time?: string;
   time_slot?: string;
   subject: string;
   teacher_name: string;
@@ -186,6 +191,23 @@ export interface ClassTimetableEntry {
   created_at?: string;
   updated_at?: string;
   // Joined fields
+  class_name?: string;
+}
+
+export type SubjectCategory =
+  | 'Academic'
+  | 'Co-curricular / Activity';
+
+export interface Subject {
+  id: string;
+  name: string;
+  code?: string;
+  class_id?: string; // 'all' or specific class id (e.g. 'c0', 'c7')
+  category?: SubjectCategory;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Joined field
   class_name?: string;
 }
 

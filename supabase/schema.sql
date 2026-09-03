@@ -77,10 +77,15 @@ CREATE TABLE IF NOT EXISTS public.students (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Ensure alt_phone and pending_avatar columns exist if table was already created
+-- Ensure alt_phone, aadhar_number, and teacher profile columns exist if tables were already created
 DO $$ BEGIN
     ALTER TABLE public.students ADD COLUMN IF NOT EXISTS alt_phone TEXT;
+    ALTER TABLE public.students ADD COLUMN IF NOT EXISTS aadhar_number TEXT;
     ALTER TABLE public.students ADD COLUMN IF NOT EXISTS pending_avatar_requested_at TIMESTAMPTZ;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS address TEXT;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS qualification TEXT;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS specialized_subject TEXT;
+    ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS aadhar_number TEXT;
     ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pending_avatar_url TEXT;
     ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pending_avatar_status TEXT;
     ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS pending_avatar_requested_at TIMESTAMPTZ;
@@ -136,6 +141,7 @@ CREATE TABLE IF NOT EXISTS public.notices (
 -- SEED INITIAL CLASSES & SECTIONS
 -- ==========================================
 INSERT INTO public.classes (id, name) VALUES
+    ('c0', 'Play'),
     ('c1', 'LKG'),
     ('c2', 'UKG'),
     ('c3', 'Class 1'),
@@ -289,6 +295,49 @@ DO $$ BEGIN
     DROP POLICY IF EXISTS "Public access to class_timetables" ON public.class_timetables;
     CREATE POLICY "Public access to class_timetables" ON public.class_timetables FOR ALL USING (true);
 EXCEPTION WHEN others THEN null; END $$;
+
+-- 13. Subjects Table
+CREATE TABLE IF NOT EXISTS public.subjects (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    name TEXT NOT NULL,
+    code TEXT,
+    class_id TEXT DEFAULT 'all',
+    category TEXT DEFAULT 'Core Academic',
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.subjects ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Public access to subjects" ON public.subjects;
+    CREATE POLICY "Public access to subjects" ON public.subjects FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
+
+-- SEED CURRICULUM SUBJECTS (Academic & Co-curricular)
+INSERT INTO public.subjects (id, name, code, class_id, category, description) VALUES
+    ('sub-1', 'Bengali (বাংলা)', 'BEN', 'all', 'Academic', 'Bengali language, literature, reading, and grammar.'),
+    ('sub-2', 'English (ইংরেজি)', 'ENG', 'all', 'Academic', 'English grammar, vocabulary, reading comprehension, and writing.'),
+    ('sub-3', 'Mathematics (গণিত)', 'MATH', 'all', 'Academic', 'Arithmetic, numerical logic, geometry, and mental math.'),
+    ('sub-4', 'Environmental Studies / EVS (পরিবেশ শিক্ষা)', 'EVS', 'all', 'Academic', 'Environmental awareness, social living, and hygiene.'),
+    ('sub-5', 'Science (বিজ্ঞান)', 'SCI', 'all', 'Academic', 'General science, nature observation, physical and life sciences.'),
+    ('sub-6', 'General Knowledge / G.K. (সাধারণ জ্ঞান)', 'GK', 'all', 'Academic', 'General awareness, current events, heritage, and quiz.'),
+    ('sub-7', 'History (ইতিহাস)', 'HIST', 'all', 'Academic', 'Indian and world history, civilisation, and cultural heritage.'),
+    ('sub-8', 'Geography (ভূগোল)', 'GEO', 'all', 'Academic', 'Physical geography, environment, and world geography.'),
+    ('sub-9', 'Computer', 'COMP', 'all', 'Academic', 'Computer fundamentals, practical usage, and typing skills.'),
+    ('sub-10', 'Sanskrit (সংস্কৃত)', 'SANS', 'all', 'Academic', 'Classical Sanskrit language, grammar, shlokas, and pronunciation.'),
+    ('sub-11', 'Drawing', 'DRAW', 'all', 'Co-curricular / Activity', 'Freehand sketching, colouring, crafts, and visual art.'),
+    ('sub-12', 'Physical Training / P.T.', 'PT', 'all', 'Co-curricular / Activity', 'Drill, physical exercise, athletics, yoga, and games.'),
+    ('sub-13', 'Music / Song', 'MUSIC', 'all', 'Co-curricular / Activity', 'Devotional songs, Rabindra Sangeet, prayer hymns, and choir.'),
+    ('sub-14', 'Rhymes', 'RHY', 'all', 'Co-curricular / Activity', 'Rhythmic recitation, phonics, and expressive action rhymes.'),
+    ('sub-15', 'Spoken English', 'SPOKEN', 'all', 'Co-curricular / Activity', 'Conversational fluency, phonetics, dialogue practice, and speech.')
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    code = EXCLUDED.code,
+    class_id = EXCLUDED.class_id,
+    category = EXCLUDED.category,
+    description = EXCLUDED.description;
 
 -- STORAGE BUCKET FOR AVATARS
 INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true)

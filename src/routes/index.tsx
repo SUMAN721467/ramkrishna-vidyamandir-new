@@ -22,7 +22,7 @@ import { faqs } from "@/data/school";
 
 const title = "Ramkrishna Vidyamandir — Bengali Medium Co-Educational School";
 const description =
-  "Ramkrishna Vidyamandir, Keshiary: a Bengali medium private co-educational school for LKG to Class X with experienced teachers, smart classrooms and a safe campus.";
+  "Ramkrishna Vidyamandir, Keshiary: a Bengali medium private co-educational school for Play to Class X with experienced teachers, smart classrooms and a safe campus.";
 
 export const Route = createFileRoute("/")({
   head: () => ({

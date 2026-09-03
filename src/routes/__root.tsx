@@ -86,7 +86,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: "description",
         content:
-          "Ramkrishna Vidyamandir is a Bengali medium private co-educational school offering LKG to Class X education with experienced teachers and a safe campus.",
+          "Ramkrishna Vidyamandir is a Bengali medium private co-educational school offering Play to Class X education with experienced teachers and a safe campus.",
       },
       { name: "author", content: "Ramkrishna Vidyamandir" },
       { property: "og:site_name", content: "Ramkrishna Vidyamandir" },
