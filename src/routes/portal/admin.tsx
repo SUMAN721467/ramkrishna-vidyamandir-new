@@ -167,12 +167,14 @@ function AdminDashboardPage() {
     period_number: number;
     subject: string;
     teacher_name: string;
+    teacher_id?: string;
   }>({
     class_id: 'c7',
     day_of_week: 'Monday',
     period_number: 1,
     subject: 'Bengali (বাংলা)',
     teacher_name: 'NA',
+    teacher_id: '',
   });
 
   // Class-wise filter in Student Directory & Exams
@@ -222,6 +224,8 @@ function AdminDashboardPage() {
   // Filters for Attendance Tab
   const [attClassId, setAttClassId] = useState('');
   const [attSectionId, setAttSectionId] = useState('');
+  const [attTeacherId, setAttTeacherId] = useState('');
+  const [attStatus, setAttStatus] = useState<'all' | 'present' | 'absent' | 'late'>('all');
   const [attStartDate, setAttStartDate] = useState('');
   const [attEndDate, setAttEndDate] = useState('');
   const [attStudentSearch, setAttStudentSearch] = useState('');
@@ -445,24 +449,30 @@ function AdminDashboardPage() {
   // Class Timetable / Daily Routine Handlers (Admin Only)
   const openCreateTimetableModal = (defaultDay?: DayOfWeek) => {
     setEditingTimetableEntry(null);
+    const initialTeacher = teachers[0];
     setTimetableForm({
       class_id: selectedRoutineClass || classes[0]?.id || 'c7',
       day_of_week: defaultDay || selectedRoutineDay || 'Monday',
       period_number: 1,
       subject: subjects[0]?.name || 'Bengali (বাংলা)',
-      teacher_name: teachers[0]?.full_name || 'NA',
+      teacher_name: initialTeacher?.full_name || 'NA',
+      teacher_id: initialTeacher?.id || '',
     });
     setShowTimetableModal(true);
   };
 
   const openEditTimetableModal = (entry: ClassTimetableEntry) => {
     setEditingTimetableEntry(entry);
+    const matchedTeacher = teachers.find(
+      (t) => t.id === entry.teacher_id || t.full_name === entry.teacher_name
+    );
     setTimetableForm({
       class_id: entry.class_id,
       day_of_week: entry.day_of_week,
       period_number: entry.period_number,
       subject: entry.subject,
       teacher_name: entry.teacher_name || 'NA',
+      teacher_id: entry.teacher_id || matchedTeacher?.id || '',
     });
     setShowTimetableModal(true);
   };
@@ -476,6 +486,11 @@ function AdminDashboardPage() {
 
     setSavingTimetable(true);
     try {
+      const matchedTeacher = teachers.find(
+        (t) => t.id === timetableForm.teacher_id || t.full_name === timetableForm.teacher_name
+      );
+      const resolvedTeacherId = matchedTeacher?.id || timetableForm.teacher_id || undefined;
+
       if (editingTimetableEntry) {
         await updateClassTimetableEntry(editingTimetableEntry.id, {
           class_id: timetableForm.class_id,
@@ -485,6 +500,7 @@ function AdminDashboardPage() {
           end_time: '',
           subject: timetableForm.subject.trim(),
           teacher_name: timetableForm.teacher_name.trim(),
+          teacher_id: resolvedTeacherId,
           room_number: '',
         });
         toast.success('Timetable period updated successfully!');
@@ -497,6 +513,7 @@ function AdminDashboardPage() {
           end_time: '',
           subject: timetableForm.subject.trim(),
           teacher_name: timetableForm.teacher_name.trim(),
+          teacher_id: resolvedTeacherId,
           room_number: '',
         });
         toast.success('Period slot added to timetable!');
@@ -668,6 +685,20 @@ function AdminDashboardPage() {
     if (attSectionId && rec.section_id !== attSectionId) return false;
     if (attStartDate && rec.date < parseDateToISO(attStartDate)) return false;
     if (attEndDate && rec.date > parseDateToISO(attEndDate)) return false;
+    if (attTeacherId && attTeacherId !== 'all') {
+      const matchId = rec.marked_by === attTeacherId;
+      const matchName =
+        (rec.marked_by_name && rec.marked_by_name.toLowerCase() === attTeacherId.toLowerCase()) ||
+        (rec.teacher_name && rec.teacher_name.toLowerCase() === attTeacherId.toLowerCase());
+      if (!matchId && !matchName) return false;
+    }
+    if (attStatus && attStatus !== 'all') {
+      if (attStatus === 'late') {
+        if (!rec.is_late || rec.status !== 'present') return false;
+      } else {
+        if (rec.status !== attStatus) return false;
+      }
+    }
     if (attStudentSearch) {
       const query = attStudentSearch.toLowerCase();
       const matchName = rec.student_name?.toLowerCase().includes(query);
@@ -2627,7 +2658,7 @@ function AdminDashboardPage() {
               </div>
 
               {/* Filter controls */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3 pt-2 border-t border-border/60">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 pt-2 border-t border-border/60">
                 <div>
                   <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
                     Class
@@ -2661,6 +2692,40 @@ function AdminDashboardPage() {
                         {s.name}
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Teacher
+                  </label>
+                  <select
+                    value={attTeacherId}
+                    onChange={(e) => setAttTeacherId(e.target.value)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="">All Teachers</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
+                    Status
+                  </label>
+                  <select
+                    value={attStatus}
+                    onChange={(e) => setAttStatus(e.target.value as any)}
+                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  >
+                    <option value="all">All Statuses</option>
+                    <option value="present">Present Only</option>
+                    <option value="absent">Absent Only</option>
+                    <option value="late">Late Only</option>
                   </select>
                 </div>
 
@@ -2716,6 +2781,7 @@ function AdminDashboardPage() {
                       <th className="px-6 py-4">Section</th>
                       <th className="px-6 py-4">Roll No.</th>
                       <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4">Late</th>
                       <th className="px-6 py-4">Marked By</th>
                       <th className="px-6 py-4 text-right">Delete Record</th>
                     </tr>
@@ -2723,7 +2789,7 @@ function AdminDashboardPage() {
                   <tbody className="divide-y divide-border">
                     {filteredAttendance.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-6 py-8 text-center text-xs text-muted-foreground">
+                        <td colSpan={9} className="px-6 py-8 text-center text-xs text-muted-foreground">
                           No attendance records found matching the specified filters.
                         </td>
                       </tr>
@@ -2731,24 +2797,32 @@ function AdminDashboardPage() {
                       filteredAttendance.map((rec) => (
                         <tr key={rec.id} className="hover:bg-muted/30 transition-colors">
                           <td className="px-6 py-4 font-mono text-xs font-bold text-foreground">{formatDateDDMMYYYY(rec.date)}</td>
-                          <td className="px-6 py-4 font-bold text-foreground">{rec.student_name || 'Anirban Das'}</td>
-                          <td className="px-6 py-4 text-xs text-muted-foreground">{rec.class_name || 'Class 5'}</td>
-                          <td className="px-6 py-4 text-xs text-muted-foreground">{rec.section_name || 'Section A'}</td>
+                          <td className="px-6 py-4 font-bold text-foreground">{rec.student_name || 'Student'}</td>
+                          <td className="px-6 py-4 text-xs text-muted-foreground">{rec.class_name || 'Class'}</td>
+                          <td className="px-6 py-4 text-xs text-muted-foreground">{rec.section_name || 'Section'}</td>
                           <td className="px-6 py-4 font-mono font-bold text-primary">#{rec.roll_number || '01'}</td>
                           <td className="px-6 py-4">
                             <span
                               className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold uppercase ${
                                 rec.status === 'present'
                                   ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                                  : rec.status === 'absent'
-                                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
-                                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                  : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                               }`}
                             >
                               {rec.status}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-xs text-muted-foreground">{rec.marked_by_name || 'Teacher'}</td>
+                          <td className="px-6 py-4">
+                            {rec.is_late && rec.status === 'present' ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 text-xs font-bold">
+                                <Clock className="size-3" />
+                                Late
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-xs font-medium text-foreground">{rec.marked_by_name || rec.teacher_name || 'Class Teacher'}</td>
                           <td className="px-6 py-4 text-right">
                             <button
                               type="button"
@@ -2947,10 +3021,18 @@ function AdminDashboardPage() {
                     >
                       {/* Top bar: Period Number */}
                       <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
-                        <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
-                          <Clock className="size-3.5" />
-                          Period {period.period_number}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
+                            <Clock className="size-3.5" />
+                            Period {period.period_number}
+                          </span>
+                          {Number(period.period_number) === 1 && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 text-[10px] font-extrabold border border-emerald-300/60 dark:border-emerald-800">
+                              <CheckCircle2 className="size-3" />
+                              Attendance Period
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Middle: Subject */}
@@ -4428,12 +4510,22 @@ function AdminDashboardPage() {
                   >
                     {[1, 2, 3, 4, 5, 6, 7].map((num) => (
                       <option key={num} value={num}>
-                        Period {num}
+                        Period {num} {num === 1 ? '— Attendance Period' : ''}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
+
+              {Number(timetableForm.period_number) === 1 && (
+                <div className="rounded-2xl border border-emerald-300/70 bg-emerald-50 dark:bg-emerald-950/40 p-3 text-xs text-emerald-900 dark:text-emerald-200 flex items-start gap-2.5">
+                  <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <p className="leading-snug">
+                    <span className="font-extrabold">Attendance Responsibility: </span>
+                    In accordance with school policy, the teacher assigned to <strong>Period 1</strong> is designated to mark and submit the official daily attendance register for this class.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Subject Selection (Dynamic + Quick Add) */}
@@ -4491,7 +4583,15 @@ function AdminDashboardPage() {
                   </label>
                   <select
                     value={timetableForm.teacher_name || 'NA'}
-                    onChange={(e) => setTimetableForm({ ...timetableForm, teacher_name: e.target.value })}
+                    onChange={(e) => {
+                      const selName = e.target.value;
+                      const found = teachers.find((t) => t.full_name === selName);
+                      setTimetableForm({
+                        ...timetableForm,
+                        teacher_name: selName,
+                        teacher_id: found ? found.id : '',
+                      });
+                    }}
                     className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
                   >
                     <option value="NA">NA (Not Assigned)</option>

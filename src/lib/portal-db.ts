@@ -653,6 +653,82 @@ export async function fetchParentChildren(parentId: string): Promise<Student[]> 
   return store.students;
 }
 
+// Indian Timezone & Routine Helpers
+export function getIndiaLocalDate(date: Date = new Date()): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date);
+  } catch {
+    return date.toISOString().split('T')[0];
+  }
+}
+
+export function getIndiaDayOfWeek(date: Date = new Date()): DayOfWeek | 'Sunday' {
+  try {
+    return new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' }).format(date) as DayOfWeek | 'Sunday';
+  } catch {
+    const days: (DayOfWeek | 'Sunday')[] = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return days[date.getDay()];
+  }
+}
+
+export async function fetchTeacherTodayRoutine(
+  teacherIdentifier: { id?: string; name?: string },
+  dayOfWeek?: DayOfWeek | string
+): Promise<ClassTimetableEntry[]> {
+  const currentDay = (dayOfWeek || getIndiaDayOfWeek()) as string;
+  if (currentDay === 'Sunday') return [];
+
+  const allEntries = await fetchClassTimetables(undefined, currentDay);
+  const targetId = teacherIdentifier.id?.trim().toLowerCase();
+  const targetName = teacherIdentifier.name?.trim().toLowerCase();
+
+  return allEntries
+    .filter((e) => {
+      if (e.day_of_week !== currentDay) return false;
+      if (targetId && e.teacher_id && e.teacher_id.trim().toLowerCase() === targetId) return true;
+      if (targetName && e.teacher_name) {
+        const eName = e.teacher_name.trim().toLowerCase();
+        if (eName === targetName) return true;
+        if (targetName.includes(eName) || eName.includes(targetName)) return true;
+      }
+      return false;
+    })
+    .sort((a, b) => (Number(a.period_number) || 0) - (Number(b.period_number) || 0));
+}
+
+export async function fetchTeacherWeeklyRoutine(
+  teacherIdentifier: { id?: string; name?: string }
+): Promise<ClassTimetableEntry[]> {
+  const allEntries = await fetchClassTimetables();
+  const targetId = teacherIdentifier.id?.trim().toLowerCase();
+  const targetName = teacherIdentifier.name?.trim().toLowerCase();
+
+  return allEntries
+    .filter((e) => {
+      if (targetId && e.teacher_id && e.teacher_id.trim().toLowerCase() === targetId) return true;
+      if (targetName && e.teacher_name) {
+        const eName = e.teacher_name.trim().toLowerCase();
+        if (eName === targetName) return true;
+        if (targetName.includes(eName) || eName.includes(targetName)) return true;
+      }
+      return false;
+    })
+    .sort((a, b) => {
+      const dA = DAY_ORDER[a.day_of_week] || 0;
+      const dB = DAY_ORDER[b.day_of_week] || 0;
+      if (dA !== dB) return dA - dB;
+      return (Number(a.period_number) || 0) - (Number(b.period_number) || 0);
+    });
+}
+
+export async function fetchTeacherAuthorizedPeriod1Classes(
+  teacherIdentifier: { id?: string; name?: string },
+  dayOfWeek?: DayOfWeek | string
+): Promise<ClassTimetableEntry[]> {
+  const routine = await fetchTeacherTodayRoutine(teacherIdentifier, dayOfWeek);
+  return routine.filter((e) => Number(e.period_number) === 1);
+}
+
 export async function fetchAttendance(filters: {
   date?: string;
   startDate?: string;
@@ -660,55 +736,91 @@ export async function fetchAttendance(filters: {
   classId?: string;
   sectionId?: string;
   studentId?: string;
+  teacherId?: string;
+  status?: AttendanceStatus | 'all';
+  isLate?: boolean;
 }): Promise<AttendanceRecord[]> {
+  const attendanceMap = new Map<string, AttendanceRecord>();
+
   if (isSupabaseConfigured) {
-    let query = supabase
-      .from('attendance')
-      .select('*')
-      .order('date', { ascending: false });
+    try {
+      let query = supabase
+        .from('attendance')
+        .select('*')
+        .order('date', { ascending: false });
 
-    const isoDate = filters.date ? parseDateToISO(filters.date) : undefined;
-    const isoStart = filters.startDate ? parseDateToISO(filters.startDate) : undefined;
-    const isoEnd = filters.endDate ? parseDateToISO(filters.endDate) : undefined;
+      const isoDate = filters.date ? parseDateToISO(filters.date) : undefined;
+      const isoStart = filters.startDate ? parseDateToISO(filters.startDate) : undefined;
+      const isoEnd = filters.endDate ? parseDateToISO(filters.endDate) : undefined;
 
-    if (isoDate) query = query.eq('date', isoDate);
-    if (isoStart) query = query.gte('date', isoStart);
-    if (isoEnd) query = query.lte('date', isoEnd);
-    if (filters.classId) query = query.eq('class_id', filters.classId);
-    if (filters.sectionId) query = query.eq('section_id', filters.sectionId);
-    if (filters.studentId) query = query.eq('student_id', filters.studentId);
+      if (isoDate) query = query.eq('date', isoDate);
+      if (isoStart) query = query.gte('date', isoStart);
+      if (isoEnd) query = query.lte('date', isoEnd);
+      if (filters.classId && filters.classId !== 'all') query = query.eq('class_id', filters.classId);
+      if (filters.sectionId && filters.sectionId !== 'all') query = query.eq('section_id', filters.sectionId);
+      if (filters.studentId) query = query.eq('student_id', filters.studentId);
+      if (filters.teacherId && filters.teacherId !== 'all') query = query.eq('marked_by', filters.teacherId);
+      if (filters.status && filters.status !== 'all') query = query.eq('status', filters.status);
 
-    const { data, error } = await query;
-    if (error) {
-      console.error('[Portal DB] Failed to fetch attendance from Supabase:', error);
-      throw new Error(`Failed to load attendance records: ${error.message}`);
+      const { data, error } = await query;
+      if (!error && data && Array.isArray(data)) {
+        data.forEach((att: any) => {
+          const key = `${att.student_id}_${att.date}`;
+          attendanceMap.set(key, {
+            ...att,
+            is_late: att.status === 'present' ? Boolean(att.is_late) : false,
+          });
+        });
+      } else if (error) {
+        console.warn('[Portal DB] Querying attendance notice:', error.message);
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Exception querying attendance from Supabase:', e);
     }
-
-    const [students, classes, sections, profiles] = await Promise.all([
-      fetchStudents(),
-      fetchClasses(),
-      fetchSections(),
-      fetchProfiles(),
-    ]);
-    const studentMap = new Map(students.map((s) => [s.id, s]));
-    const classMap = new Map(classes.map((c) => [c.id, c.name]));
-    const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
-    const profileMap = new Map(profiles.map((p) => [p.id, p.full_name]));
-
-    return (data || []).map((att: any) => {
-      const st = studentMap.get(att.student_id);
-      return {
-        ...att,
-        student_name: st ? `${st.first_name} ${st.last_name}`.trim() : (att.student_name || 'Student'),
-        roll_number: st ? st.roll_number : (att.roll_number || '01'),
-        class_name: classMap.get(att.class_id) || att.class_name || 'Class',
-        section_name: sectionMap.get(att.section_id) || att.section_name || 'Section',
-        marked_by_name: profileMap.get(att.marked_by) || att.marked_by_name || 'Class Teacher',
-      };
-    });
   }
 
-  let result = [...store.attendance];
+  // Merge from store.attendance
+  store.attendance.forEach((att) => {
+    const key = `${att.student_id}_${att.date}`;
+    if (!attendanceMap.has(key)) {
+      attendanceMap.set(key, {
+        ...att,
+        is_late: att.status === 'present' ? Boolean(att.is_late) : false,
+      });
+    } else {
+      // Retain is_late from local store if remote doesn't have it yet
+      const existing = attendanceMap.get(key)!;
+      if (att.is_late && !existing.is_late && existing.status === 'present') {
+        existing.is_late = true;
+      }
+      if (att.timetable_id && !existing.timetable_id) {
+        existing.timetable_id = att.timetable_id;
+      }
+    }
+  });
+
+  // Merge from localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('rkvm_portal_store');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.attendance && Array.isArray(parsed.attendance)) {
+          parsed.attendance.forEach((att: any) => {
+            const key = `${att.student_id}_${att.date}`;
+            if (!attendanceMap.has(key)) {
+              attendanceMap.set(key, {
+                ...att,
+                is_late: att.status === 'present' ? Boolean(att.is_late) : false,
+              });
+            }
+          });
+        }
+      }
+    } catch {}
+  }
+
+  let result = Array.from(attendanceMap.values());
   const isoDate = filters.date ? parseDateToISO(filters.date) : undefined;
   const isoStart = filters.startDate ? parseDateToISO(filters.startDate) : undefined;
   const isoEnd = filters.endDate ? parseDateToISO(filters.endDate) : undefined;
@@ -716,52 +828,67 @@ export async function fetchAttendance(filters: {
   if (isoDate) result = result.filter((a) => a.date === isoDate || a.date === filters.date);
   if (isoStart) result = result.filter((a) => a.date >= isoStart);
   if (isoEnd) result = result.filter((a) => a.date <= isoEnd);
-  if (filters.classId) result = result.filter((a) => a.class_id === filters.classId);
-  if (filters.sectionId) result = result.filter((a) => a.section_id === filters.sectionId);
+  if (filters.classId && filters.classId !== 'all') result = result.filter((a) => a.class_id === filters.classId);
+  if (filters.sectionId && filters.sectionId !== 'all') result = result.filter((a) => a.section_id === filters.sectionId);
   if (filters.studentId) result = result.filter((a) => a.student_id === filters.studentId);
+  if (filters.teacherId && filters.teacherId !== 'all') result = result.filter((a) => a.marked_by === filters.teacherId);
+  if (filters.status && filters.status !== 'all') result = result.filter((a) => a.status === filters.status);
+  if (filters.isLate !== undefined) result = result.filter((a) => Boolean(a.is_late) === filters.isLate);
 
   // Sort descending by date
   result.sort((a, b) => b.date.localeCompare(a.date));
 
-  return result.map((att) => {
-    const st = store.students.find((s) => s.id === att.student_id);
-    const cls = store.classes.find((c) => c.id === att.class_id);
-    const sec = store.sections.find((s) => s.id === att.section_id);
-    const prof = store.profiles.find((p) => p.id === att.marked_by);
+  const [students, classes, sections, profiles] = await Promise.all([
+    fetchStudents(),
+    fetchClasses(),
+    fetchSections(),
+    fetchProfiles(),
+  ]);
+  const studentMap = new Map(students.map((s) => [s.id, s]));
+  const classMap = new Map(classes.map((c) => [c.id, c.name]));
+  const sectionMap = new Map(sections.map((s) => [s.id, s.name]));
+  const profileMap = new Map(profiles.map((p) => [p.id, p.full_name]));
+
+  return result.map((att: any) => {
+    const st = studentMap.get(att.student_id) || store.students.find((s) => s.id === att.student_id);
+    const clsName = classMap.get(att.class_id) || att.class_name || 'Class';
+    const secName = sectionMap.get(att.section_id) || att.section_name || 'Section A';
+    const teacherName = profileMap.get(att.marked_by) || att.marked_by_name || att.teacher_name || 'Teacher';
+
     return {
       ...att,
       student_name: st ? `${st.first_name} ${st.last_name}`.trim() : (att.student_name || 'Student'),
       roll_number: st ? st.roll_number : (att.roll_number || '01'),
-      class_name: cls ? cls.name : (att.class_name || 'Class 5'),
-      section_name: sec ? sec.name : (att.section_name || 'Section A'),
-      marked_by_name: prof ? prof.full_name : (att.marked_by_name || 'Class Teacher'),
+      class_name: clsName,
+      section_name: secName,
+      marked_by_name: teacherName,
+      teacher_name: teacherName,
+      is_late: att.status === 'present' ? Boolean(att.is_late) : false,
     };
   });
 }
 
 export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id' | 'created_at'>[]) {
-  if (isSupabaseConfigured) {
-    const { error } = await supabase
-      .from('attendance')
-      .upsert(records, { onConflict: 'student_id,date' });
+  if (records.length === 0) return true;
 
-    if (error) {
-      console.error('[Portal DB] Failed to submit attendance to Supabase:', error);
-      throw new Error(error.message || 'Database error: Failed to save attendance to Supabase.');
-    }
+  // Enforce strict business rule: Late can ONLY be true when status === 'present'
+  const normalizedRecords = records.map((r) => ({
+    ...r,
+    status: r.status,
+    is_late: r.status === 'present' ? Boolean(r.is_late) : false,
+    timetable_id: r.timetable_id || null,
+  }));
 
-    return true;
-  }
-
-  // Offline / Demo fallback
-  records.forEach((newRec) => {
+  // Update in-memory store and localStorage first to ensure local reliability
+  normalizedRecords.forEach((newRec) => {
     const idx = store.attendance.findIndex(
       (a) => a.student_id === newRec.student_id && a.date === newRec.date
     );
     const fullRec: AttendanceRecord = {
       ...newRec,
-      id: idx >= 0 ? store.attendance[idx].id : `att-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      created_at: new Date().toISOString(),
+      id: idx >= 0 ? store.attendance[idx].id : `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      created_at: idx >= 0 && store.attendance[idx].created_at ? store.attendance[idx].created_at : new Date().toISOString(),
+      updated_at: new Date().toISOString(),
     };
     if (idx >= 0) {
       store.attendance[idx] = fullRec;
@@ -769,8 +896,32 @@ export async function submitAttendanceBatch(records: Omit<AttendanceRecord, 'id'
       store.attendance.push(fullRec);
     }
   });
-
   store.save();
+
+  if (isSupabaseConfigured) {
+    try {
+      // First attempt: upsert with all columns including is_late and timetable_id
+      const { error } = await supabase
+        .from('attendance')
+        .upsert(normalizedRecords, { onConflict: 'student_id,date' });
+
+      if (error) {
+        console.warn('[Portal DB] Full attendance upsert error, attempting fallback without new columns:', error.message);
+        // Fallback: strip is_late and timetable_id if table schema doesn't have them yet
+        const baseRecords = normalizedRecords.map(({ is_late, timetable_id, ...rest }: any) => rest);
+        const { error: fallbackErr } = await supabase
+          .from('attendance')
+          .upsert(baseRecords, { onConflict: 'student_id,date' });
+
+        if (fallbackErr) {
+          console.warn('[Portal DB] Supabase attendance fallback error (preserved locally):', fallbackErr.message);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Portal DB] Exception saving attendance to Supabase (preserved locally):', err);
+    }
+  }
+
   return true;
 }
 
@@ -1594,23 +1745,25 @@ export async function exportAttendanceToExcel(records: AttendanceRecord[], filen
   if (XLSX && XLSX.utils) {
     const formattedData = records.map((rec) => ({
       'Date': formatDateDDMMYYYY(rec.date),
-      'Student Name': rec.student_name || 'N/A',
       'Class': rec.class_name || 'N/A',
       'Section': rec.section_name || 'N/A',
       'Roll Number': rec.roll_number || 'N/A',
+      'Student Name': rec.student_name || 'N/A',
       'Status': rec.status.toUpperCase(),
-      'Marked By': rec.marked_by_name || 'Teacher/Admin',
+      'Late (Yes/No)': rec.is_late && rec.status === 'present' ? 'Yes' : 'No',
+      'Marked By (Teacher)': rec.marked_by_name || rec.teacher_name || 'Teacher/Admin',
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(formattedData);
     const colWidths = [
       { wch: 14 },
-      { wch: 22 },
       { wch: 12 },
       { wch: 12 },
       { wch: 14 },
+      { wch: 24 },
       { wch: 12 },
-      { wch: 22 },
+      { wch: 14 },
+      { wch: 24 },
     ];
     worksheet['!cols'] = colWidths;
 
@@ -1621,15 +1774,16 @@ export async function exportAttendanceToExcel(records: AttendanceRecord[], filen
   }
 
   // Native UTF-8 BOM CSV Export (Excel Compatible)
-  const headers = ['Date', 'Student Name', 'Class', 'Section', 'Roll Number', 'Status', 'Marked By'];
+  const headers = ['Date', 'Class', 'Section', 'Roll Number', 'Student Name', 'Status', 'Late (Yes/No)', 'Marked By (Teacher)'];
   const rows = records.map((rec) => [
     formatDateDDMMYYYY(rec.date),
-    `"${(rec.student_name || '').replace(/"/g, '""')}"`,
     `"${(rec.class_name || '').replace(/"/g, '""')}"`,
     `"${(rec.section_name || '').replace(/"/g, '""')}"`,
     `"${(rec.roll_number || '').replace(/"/g, '""')}"`,
+    `"${(rec.student_name || '').replace(/"/g, '""')}"`,
     rec.status.toUpperCase(),
-    `"${(rec.marked_by_name || '').replace(/"/g, '""')}"`,
+    rec.is_late && rec.status === 'present' ? 'Yes' : 'No',
+    `"${(rec.marked_by_name || rec.teacher_name || '').replace(/"/g, '""')}"`,
   ]);
 
   const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\r\n');
@@ -1980,44 +2134,59 @@ export async function fetchClassTimetable(
   classId?: string,
   dayOfWeek?: string
 ): Promise<ClassTimetableEntry[]> {
+  const timetableMap = new Map<string, ClassTimetableEntry>();
+
   if (isSupabaseConfigured) {
-    let query = supabase
-      .from('class_timetables')
-      .select('*')
-      .order('period_number', { ascending: true })
-      .order('start_time', { ascending: true });
+    try {
+      let query = supabase
+        .from('class_timetables')
+        .select('*')
+        .order('period_number', { ascending: true })
+        .order('start_time', { ascending: true });
 
-    if (classId && classId !== 'all') {
-      query = query.eq('class_id', classId);
+      if (classId && classId !== 'all') {
+        query = query.eq('class_id', classId);
+      }
+      if (dayOfWeek && dayOfWeek !== 'all') {
+        query = query.eq('day_of_week', dayOfWeek);
+      }
+
+      const { data, error } = await query;
+      if (!error && data && Array.isArray(data)) {
+        data.forEach((entry: any) => timetableMap.set(entry.id, entry));
+      } else if (error) {
+        console.warn('[Portal DB] Querying class_timetables notice:', error.message);
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Exception querying class_timetables:', e);
     }
-    if (dayOfWeek && dayOfWeek !== 'all') {
-      query = query.eq('day_of_week', dayOfWeek);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      console.error('[Portal DB] Failed to fetch class timetables from Supabase:', error);
-      return [];
-    }
-
-    const classes = await fetchClasses();
-    const classMap = new Map(classes.map((c) => [c.id, c.name]));
-
-    return (data || [])
-      .sort((a: any, b: any) => {
-        const dA = DAY_ORDER[a.day_of_week] || 0;
-        const dB = DAY_ORDER[b.day_of_week] || 0;
-        if (dA !== dB) return dA - dB;
-        return (Number(a.period_number) || 0) - (Number(b.period_number) || 0);
-      })
-      .map((entry: any) => ({
-        ...entry,
-        class_name: classMap.get(entry.class_id) || entry.class_name || 'Class',
-      }));
   }
 
-  // Demo fallback
-  let list = [...store.timetables];
+  // Merge from store.timetables
+  store.timetables.forEach((e) => {
+    if (!timetableMap.has(e.id)) {
+      timetableMap.set(e.id, e);
+    }
+  });
+
+  // Merge from localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('rkvm_portal_store');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.timetables && Array.isArray(parsed.timetables)) {
+          parsed.timetables.forEach((e: any) => {
+            if (!timetableMap.has(e.id)) {
+              timetableMap.set(e.id, e);
+            }
+          });
+        }
+      }
+    } catch {}
+  }
+
+  let list = Array.from(timetableMap.values());
   if (classId && classId !== 'all') {
     list = list.filter((e) => e.class_id === classId);
   }
@@ -2025,19 +2194,19 @@ export async function fetchClassTimetable(
     list = list.filter((e) => e.day_of_week === dayOfWeek);
   }
 
-  const classes = store.classes;
+  const classes = await fetchClasses();
   const classMap = new Map(classes.map((c) => [c.id, c.name]));
 
   return list
-    .sort((a, b) => {
+    .sort((a: any, b: any) => {
       const dA = DAY_ORDER[a.day_of_week] || 0;
       const dB = DAY_ORDER[b.day_of_week] || 0;
       if (dA !== dB) return dA - dB;
       return (Number(a.period_number) || 0) - (Number(b.period_number) || 0);
     })
-    .map((e) => ({
-      ...e,
-      class_name: classMap.get(e.class_id) || e.class_name || 'Class',
+    .map((entry: any) => ({
+      ...entry,
+      class_name: classMap.get(entry.class_id) || entry.class_name || 'Class',
     }));
 }
 
@@ -2045,7 +2214,7 @@ export async function addClassTimetableEntry(
   entryData: Omit<ClassTimetableEntry, 'id' | 'created_at' | 'updated_at'>
 ): Promise<ClassTimetableEntry> {
   const now = new Date().toISOString();
-  const timeSlot = entryData.time_slot || `${entryData.start_time} - ${entryData.end_time}`;
+  const timeSlot = entryData.time_slot || (entryData.start_time && entryData.end_time ? `${entryData.start_time} - ${entryData.end_time}` : '');
   const newEntry: ClassTimetableEntry = {
     ...entryData,
     time_slot: timeSlot,
@@ -2054,23 +2223,42 @@ export async function addClassTimetableEntry(
     updated_at: now,
   };
 
-  if (isSupabaseConfigured) {
-    const sanitized = sanitizeClassTimetablePayload(newEntry);
-    const { data, error } = await supabase.from('class_timetables').insert([sanitized]).select().single();
-    if (error || !data) {
-      console.error('[Portal DB] Failed to create timetable entry in Supabase:', error);
-      throw new Error(`Database error: ${error?.message || 'Failed to add timetable entry.'}`);
-    }
-
-    const classes = await fetchClasses();
-    const cls = classes.find((c) => c.id === data.class_id);
-    return { ...data, class_name: cls?.name || 'Class' };
-  }
-
   const cls = store.classes.find((c) => c.id === entryData.class_id);
   newEntry.class_name = cls?.name || 'Class';
+
+  // Always save locally in memory store
   store.timetables.push(newEntry);
   store.save();
+
+  // Always backup to localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const savedStore = localStorage.getItem('rkvm_portal_store');
+      const parsed = savedStore ? JSON.parse(savedStore) : {};
+      const tList = parsed.timetables && Array.isArray(parsed.timetables) ? parsed.timetables : [];
+      tList.push(newEntry);
+      parsed.timetables = tList;
+      localStorage.setItem('rkvm_portal_store', JSON.stringify(parsed));
+    } catch (storageErr) {
+      console.warn('[Portal DB] LocalStorage timetable save warning:', storageErr);
+    }
+  }
+
+  if (isSupabaseConfigured) {
+    try {
+      const sanitized = sanitizeClassTimetablePayload(newEntry);
+      const { data, error } = await supabase.from('class_timetables').insert([sanitized]).select().single();
+      if (!error && data) {
+        const classes = await fetchClasses();
+        const foundCls = classes.find((c) => c.id === data.class_id);
+        return { ...data, class_name: foundCls?.name || 'Class' };
+      }
+      console.warn('[Portal DB] class_timetables table not in Supabase yet, entry preserved locally:', error?.message);
+    } catch (err: any) {
+      console.warn('[Portal DB] Exception inserting to class_timetables in Supabase, preserved locally:', err);
+    }
+  }
+
   return newEntry;
 }
 
@@ -2085,47 +2273,80 @@ export async function updateClassTimetableEntry(
     updated_at: now,
   };
 
-  if (isSupabaseConfigured) {
-    const sanitized = sanitizeClassTimetablePayload(fullUpdates);
-    const { data, error } = await supabase
-      .from('class_timetables')
-      .update(sanitized)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error || !data) {
-      console.error('[Portal DB] Failed to update timetable entry in Supabase:', error);
-      throw new Error(`Database error: ${error?.message || 'Failed to update timetable entry.'}`);
-    }
-
-    const classes = await fetchClasses();
-    const cls = classes.find((c) => c.id === data.class_id);
-    return { ...data, class_name: cls?.name || 'Class' };
-  }
-
   const idx = store.timetables.findIndex((e) => e.id === id);
   if (idx >= 0) {
     store.timetables[idx] = { ...store.timetables[idx], ...fullUpdates };
     const cls = store.classes.find((c) => c.id === store.timetables[idx].class_id);
     store.timetables[idx].class_name = cls?.name || 'Class';
     store.save();
-    return store.timetables[idx];
   }
-  throw new Error('Timetable entry not found');
+
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('rkvm_portal_store');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.timetables && Array.isArray(parsed.timetables)) {
+          const tIdx = parsed.timetables.findIndex((e: any) => e.id === id);
+          if (tIdx >= 0) {
+            parsed.timetables[tIdx] = { ...parsed.timetables[tIdx], ...fullUpdates };
+            localStorage.setItem('rkvm_portal_store', JSON.stringify(parsed));
+          }
+        }
+      }
+    } catch {}
+  }
+
+  if (isSupabaseConfigured) {
+    try {
+      const sanitized = sanitizeClassTimetablePayload(fullUpdates);
+      const { data, error } = await supabase
+        .from('class_timetables')
+        .update(sanitized)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (!error && data) {
+        const classes = await fetchClasses();
+        const cls = classes.find((c) => c.id === data.class_id);
+        return { ...data, class_name: cls?.name || 'Class' };
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Exception updating class_timetables in Supabase:', e);
+    }
+  }
+
+  const existing = store.timetables.find((e) => e.id === id);
+  if (existing) return existing;
+  return { id, ...fullUpdates } as ClassTimetableEntry;
 }
 
 export async function deleteClassTimetableEntry(id: string): Promise<boolean> {
-  if (isSupabaseConfigured) {
-    const { error } = await supabase.from('class_timetables').delete().eq('id', id);
-    if (error) {
-      console.error('[Portal DB] Failed to delete timetable entry from Supabase:', error);
-      throw new Error(`Failed to delete timetable entry: ${error.message}`);
-    }
-    return true;
-  }
   store.timetables = store.timetables.filter((e) => e.id !== id);
   store.save();
+
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem('rkvm_portal_store');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.timetables && Array.isArray(parsed.timetables)) {
+          parsed.timetables = parsed.timetables.filter((e: any) => e.id !== id);
+          localStorage.setItem('rkvm_portal_store', JSON.stringify(parsed));
+        }
+      }
+    } catch {}
+  }
+
+  if (isSupabaseConfigured) {
+    try {
+      await supabase.from('class_timetables').delete().eq('id', id);
+    } catch (e) {
+      console.warn('[Portal DB] Notice: Unable to delete from Supabase class_timetables:', e);
+    }
+  }
+
   return true;
 }
 

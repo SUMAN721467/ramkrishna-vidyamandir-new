@@ -23,6 +23,8 @@ import {
   ShieldCheck,
   KeyRound,
   Camera,
+  Info,
+  AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PortalHeader } from '../../components/portal/PortalHeader';
@@ -44,13 +46,26 @@ import {
   updateScheduledExam,
   deleteScheduledExam,
   fetchSubjects,
+  getIndiaLocalDate,
+  getIndiaDayOfWeek,
+  fetchTeacherWeeklyRoutine,
 } from '../../lib/portal-db';
 import { formatDateDDMMYYYY, formatDateSlash, parseDateToISO } from '../../lib/format';
 import { DateInput } from '../../components/ui/date-input';
 import { ConfirmDialog } from '../../components/portal/ConfirmDialog';
 import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
-import type { Student, AttendanceRecord, Notice, AttendanceStatus, StudentMark, ScheduledExam, Subject } from '../../types/portal';
+import type {
+  Student,
+  AttendanceRecord,
+  Notice,
+  AttendanceStatus,
+  StudentMark,
+  ScheduledExam,
+  Subject,
+  ClassTimetableEntry,
+  DayOfWeek,
+} from '../../types/portal';
 
 export const Route = createFileRoute('/portal/teacher')({
   component: TeacherDashboardPage,
@@ -84,6 +99,25 @@ function TeacherDashboardPage() {
   // Summary / Notices
   const [notices, setNotices] = useState<Notice[]>([]);
   const [recentRecords, setRecentRecords] = useState<AttendanceRecord[]>([]);
+
+  // Timetable Routine & Period 1 Attendance states
+  const [weeklyRoutine, setWeeklyRoutine] = useState<ClassTimetableEntry[]>([]);
+  const todayIndiaDay = getIndiaDayOfWeek();
+  const todayIndiaDate = getIndiaLocalDate();
+  const [selectedRoutineDay, setSelectedRoutineDay] = useState<DayOfWeek>(
+    todayIndiaDay === 'Sunday' ? 'Monday' : (todayIndiaDay as DayOfWeek)
+  );
+  const [todayAttendanceRecords, setTodayAttendanceRecords] = useState<AttendanceRecord[]>([]);
+
+  // Attendance Sheet Modal State
+  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
+  const [activePeriod1Entry, setActivePeriod1Entry] = useState<ClassTimetableEntry | null>(null);
+  const [modalStudents, setModalStudents] = useState<Student[]>([]);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalSaving, setModalSaving] = useState(false);
+  const [modalStatusMap, setModalStatusMap] = useState<Record<string, 'present' | 'absent'>>({});
+  const [modalLateMap, setModalLateMap] = useState<Record<string, boolean>>({});
+  const [isAlreadySubmittedForActive, setIsAlreadySubmittedForActive] = useState(false);
 
   // Marks Entry State
   const [examName, setExamName] = useState('Unit Assessment 1 (2026)');
@@ -296,6 +330,190 @@ function TeacherDashboardPage() {
     }
     loadMarksData();
   }, [selectedClassId, selectedSectionId, examName, subjectName, students]);
+
+  // Load Teacher Routine and Today's Attendance
+  const loadTeacherRoutineAndAttendance = async () => {
+    if (!user) return;
+    try {
+      const teacherId = profile?.id || user.id;
+      const teacherName = profile?.full_name || '';
+
+      const routine = await fetchTeacherWeeklyRoutine({ id: teacherId, name: teacherName });
+      setWeeklyRoutine(routine);
+
+      const todayDate = getIndiaLocalDate();
+      const todayAtt = await fetchAttendance({ date: todayDate });
+      setTodayAttendanceRecords(todayAtt);
+    } catch (e) {
+      console.warn('[Teacher Dashboard] Failed to load routine & attendance:', e);
+    }
+  };
+
+  useEffect(() => {
+    loadTeacherRoutineAndAttendance();
+  }, [user, profile]);
+
+  // Today's Period 1 classes assigned to this teacher
+  const todayPeriod1Classes = useMemo(() => {
+    if (todayIndiaDay === 'Sunday') return [];
+    return weeklyRoutine.filter(
+      (e) => e.day_of_week === todayIndiaDay && Number(e.period_number) === 1
+    );
+  }, [weeklyRoutine, todayIndiaDay]);
+
+  // Routine for the selected day in Section 2
+  const selectedDayRoutine = useMemo(() => {
+    return weeklyRoutine
+      .filter((e) => e.day_of_week === selectedRoutineDay)
+      .sort((a, b) => (Number(a.period_number) || 0) - (Number(b.period_number) || 0));
+  }, [weeklyRoutine, selectedRoutineDay]);
+
+  // Helper to check existing attendance status for a class today
+  const getPeriod1AttendanceSummary = (classId: string, className?: string) => {
+    const matches = todayAttendanceRecords.filter(
+      (a) => a.class_id === classId || (className && a.class_name?.toLowerCase() === className.toLowerCase())
+    );
+    if (matches.length === 0) {
+      return { isSubmitted: false, presentCount: 0, absentCount: 0, lateCount: 0, total: 0 };
+    }
+    const present = matches.filter((a) => a.status === 'present').length;
+    const absent = matches.filter((a) => a.status === 'absent').length;
+    const late = matches.filter((a) => a.status === 'present' && Boolean(a.is_late)).length;
+    return {
+      isSubmitted: true,
+      presentCount: present,
+      absentCount: absent,
+      lateCount: late,
+      total: matches.length,
+    };
+  };
+
+  // Open Attendance Sheet Modal for Period 1 Class
+  const handleOpenAttendanceModal = async (entry: ClassTimetableEntry) => {
+    setActivePeriod1Entry(entry);
+    setIsAttendanceModalOpen(true);
+    setModalLoading(true);
+
+    try {
+      const todayDate = getIndiaLocalDate();
+
+      // Fetch all students and strictly filter for this class
+      const allStudents = await fetchStudents(entry.class_id);
+      const strictlyEnrolled = allStudents.filter(
+        (s) => s.class_id === entry.class_id || (entry.class_name && s.class_name?.toLowerCase() === entry.class_name.toLowerCase())
+      );
+      strictlyEnrolled.sort((a, b) => {
+        const rA = parseInt(a.roll_number || '0', 10);
+        const rB = parseInt(b.roll_number || '0', 10);
+        return rA - rB;
+      });
+      setModalStudents(strictlyEnrolled);
+
+      // Fetch existing records for this class on today's date
+      const existing = await fetchAttendance({
+        date: todayDate,
+        classId: entry.class_id,
+      });
+
+      const statusMap: Record<string, 'present' | 'absent'> = {};
+      const lateMap: Record<string, boolean> = {};
+      let hasExisting = false;
+
+      strictlyEnrolled.forEach((st) => {
+        const match = existing.find((a) => a.student_id === st.id);
+        if (match) {
+          hasExisting = true;
+          statusMap[st.id] = match.status === 'absent' ? 'absent' : 'present';
+          lateMap[st.id] = match.status === 'present' && Boolean(match.is_late);
+        } else {
+          // Default to PRESENT
+          statusMap[st.id] = 'present';
+          lateMap[st.id] = false;
+        }
+      });
+
+      setIsAlreadySubmittedForActive(hasExisting);
+      setModalStatusMap(statusMap);
+      setModalLateMap(lateMap);
+    } catch (err: any) {
+      console.error('[Teacher Dashboard] Error loading attendance roster:', err);
+      toast.error('Failed to load class roster for attendance.');
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  // Toggle student status between Present and Absent
+  const handleToggleModalStatus = (studentId: string, status: 'present' | 'absent') => {
+    setModalStatusMap((prev) => ({ ...prev, [studentId]: status }));
+    if (status === 'absent') {
+      // Rule: Late is only enabled when PRESENT. If ABSENT, Late is disabled and unchecked.
+      setModalLateMap((prev) => ({ ...prev, [studentId]: false }));
+    }
+  };
+
+  // Toggle Late checkbox
+  const handleToggleModalLate = (studentId: string, checked: boolean) => {
+    if (modalStatusMap[studentId] === 'present') {
+      setModalLateMap((prev) => ({ ...prev, [studentId]: checked }));
+    }
+  };
+
+  // Batch actions in modal
+  const handleModalMarkAll = (status: 'present' | 'absent') => {
+    const newStatus: Record<string, 'present' | 'absent'> = {};
+    const newLate: Record<string, boolean> = {};
+    modalStudents.forEach((st) => {
+      newStatus[st.id] = status;
+      newLate[st.id] = false;
+    });
+    setModalStatusMap(newStatus);
+    setModalLateMap(newLate);
+    toast.info(`Marked all students as ${status.toUpperCase()}`);
+  };
+
+  // Save Attendance from modal
+  const handleModalSubmitAttendance = async () => {
+    if (!activePeriod1Entry) return;
+    if (modalStudents.length === 0) {
+      toast.error('No students in this class to record attendance.');
+      return;
+    }
+
+    setModalSaving(true);
+    try {
+      const todayDate = getIndiaLocalDate();
+      const records = modalStudents.map((st) => {
+        const status = modalStatusMap[st.id] || 'present';
+        const isLate = status === 'present' ? Boolean(modalLateMap[st.id]) : false;
+        return {
+          student_id: st.id,
+          class_id: activePeriod1Entry.class_id,
+          section_id: st.section_id || activePeriod1Entry.class_id,
+          date: todayDate,
+          status: status as AttendanceStatus,
+          is_late: isLate,
+          timetable_id: activePeriod1Entry.id,
+          marked_by: profile?.id || user?.id || 'u-teacher',
+        };
+      });
+
+      await submitAttendanceBatch(records);
+      toast.success(
+        `Attendance saved successfully for Class ${activePeriod1Entry.class_name || 'Class'} — ${modalStudents.length} students.`
+      );
+
+      // Refresh today's attendance records
+      const todayAtt = await fetchAttendance({ date: todayDate });
+      setTodayAttendanceRecords(todayAtt);
+      setIsAttendanceModalOpen(false);
+    } catch (err: any) {
+      console.error('[Teacher Dashboard] Failed to submit attendance:', err);
+      toast.error(err.message || 'Failed to submit attendance.');
+    } finally {
+      setModalSaving(false);
+    }
+  };
 
   // Status toggle handler
   const setStudentStatus = (studentId: string, status: AttendanceStatus) => {
@@ -544,7 +762,10 @@ function TeacherDashboardPage() {
               }`}
             >
               <CheckSquare className="size-4" />
-              Take Attendance
+              Attendance & Routine
+              {todayPeriod1Classes.length > 0 && (
+                <span className="size-2 rounded-full bg-emerald-500 animate-pulse ml-0.5" />
+              )}
             </button>
 
             <button
@@ -611,211 +832,284 @@ function TeacherDashboardPage() {
       </div>
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 space-y-6">
-        {/* TAKE ATTENDANCE TAB */}
+        {/* ATTENDANCE & ROUTINE TAB */}
         {activeTab === 'take' && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            {/* Control Panel Card: Class & Date Selection */}
-            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-8 animate-in fade-in duration-300">
+            {/* ================================================== */}
+            {/* SECTION 1: TODAY'S ATTENDANCE                      */}
+            {/* ================================================== */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/60 pb-4">
                 <div>
-                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-                    <Calendar className="size-5 text-primary" />
-                    Daily Class Attendance Register
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold uppercase tracking-wide">
+                      <CheckSquare className="size-3.5" />
+                      Section 1 • Period 1 Assignment
+                    </span>
+                    <span className="text-xs font-mono text-muted-foreground">
+                      Today: {formatDateDDMMYYYY(todayIndiaDate)} ({todayIndiaDay})
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-extrabold text-foreground tracking-tight mt-1.5 flex items-center gap-2">
+                    Today's Attendance Responsibilities
                   </h2>
-                  <p className="text-xs text-muted-foreground">
-                    Select your assigned class and date to mark or edit student attendance.
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Under RKVM rules, the teacher assigned to <strong>Period 1</strong> on today's timetable is authorized to mark daily attendance.
                   </p>
                 </div>
 
-                {/* Submit Button */}
-                <button
-                  type="button"
-                  onClick={handleSubmitAttendance}
-                  disabled={saving || students.length === 0}
-                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
-                >
-                  {saving ? (
-                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
-                  ) : (
-                    <Save className="size-4" />
-                  )}
-                  Submit Attendance
-                </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground bg-muted/60 px-3 py-1.5 rounded-xl border border-border">
+                    {todayPeriod1Classes.length} Attendance {todayPeriod1Classes.length === 1 ? 'Class' : 'Classes'} Today
+                  </span>
+                </div>
               </div>
 
-              {/* Class & Date Selectors */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-border/60">
-                <div>
-                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                    Assigned Class & Section
-                  </label>
-                  <select
-                    value={`${selectedClassId}_${selectedSectionId}`}
-                    onChange={(e) => {
-                      const [cId, sId] = e.target.value.split('_');
-                      setSelectedClassId(cId);
-                      setSelectedSectionId(sId);
-                    }}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
-                  >
-                    {assignedClasses.map((ac) => (
-                      <option key={`${ac.class_id}_${ac.section_id}`} value={`${ac.class_id}_${ac.section_id}`}>
-                        {ac.class_name} — {ac.section_name}
-                      </option>
-                    ))}
-                  </select>
+              {/* Period 1 Classes Cards or Empty Message */}
+              {todayIndiaDay === 'Sunday' ? (
+                <div className="rounded-2xl border border-border bg-muted/30 p-8 text-center space-y-2">
+                  <div className="size-12 rounded-full bg-primary/10 text-primary grid place-items-center mx-auto mb-2">
+                    <Calendar className="size-6" />
+                  </div>
+                  <h3 className="text-base font-bold text-foreground">Today is Sunday (School Holiday)</h3>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    No timetable periods or student attendance are scheduled for Sunday.
+                  </p>
                 </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase mb-1">
-                    Attendance Date <span className="text-[10px] text-muted-foreground/80 font-normal lowercase">(dd/mm/yyyy)</span>
-                  </label>
-                  <DateInput
-                    placeholder="DD/MM/YYYY"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                  />
-                </div>
-
-                {/* Quick Stats Pills */}
-                <div className="flex items-center justify-between sm:justify-end gap-3 pt-4 sm:pt-0">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-1 text-xs font-bold">
-                      <CheckCircle2 className="size-3.5" />
-                      {presentCount} Present
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 px-2.5 py-1 text-xs font-bold">
-                      <XCircle className="size-3.5" />
-                      {absentCount} Absent
-                    </span>
-                    {lateCount > 0 && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2.5 py-1 text-xs font-bold">
-                        <Clock className="size-3.5" />
-                        {lateCount} Late
-                      </span>
-                    )}
+              ) : todayPeriod1Classes.length === 0 ? (
+                <div className="rounded-2xl border border-border/80 bg-muted/20 p-8 text-center space-y-3">
+                  <div className="size-12 rounded-full bg-muted text-muted-foreground grid place-items-center mx-auto">
+                    <Info className="size-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-foreground">No attendance assigned for today.</h3>
+                    <p className="text-xs text-muted-foreground max-w-lg mx-auto mt-1">
+                      You are not assigned to Period 1 of any class for today ({todayIndiaDay}). In accordance with school policy, attendance is exclusively taken during Period 1. You may view your teaching routine below.
+                    </p>
                   </div>
                 </div>
-              </div>
-
-              {/* Mobile Quick Batch Actions */}
-              <div className="flex items-center justify-between pt-2 border-t border-border/40">
-                <span className="text-xs font-semibold text-muted-foreground">Quick Actions:</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleMarkAll('present')}
-                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition-colors"
-                  >
-                    <CheckCheck className="size-3.5" />
-                    Mark All Present
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMarkAll('absent')}
-                    className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1 text-xs font-bold text-rose-800 hover:bg-rose-100 transition-colors"
-                  >
-                    <Ban className="size-3.5" />
-                    Mark All Absent
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Student List Sheet */}
-            <div className="rounded-3xl border border-border bg-card shadow-soft overflow-hidden">
-              <div className="p-4 bg-muted/40 border-b border-border flex items-center justify-between">
-                <h3 className="text-sm font-bold text-foreground">
-                  Student List ({students.length} Students)
-                </h3>
-                <span className="text-xs text-muted-foreground font-mono">Date: {formatDateDDMMYYYY(selectedDate)}</span>
-              </div>
-
-              {loading ? (
-                <div className="p-12 text-center">
-                  <div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
-                </div>
-              ) : students.length === 0 ? (
-                <div className="p-12 text-center text-xs text-muted-foreground">
-                  No active students enrolled in this class section.
-                </div>
               ) : (
-                <div className="divide-y divide-border">
-                  {students.map((st) => {
-                    const currentStatus = attendanceMap[st.id] || 'present';
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {todayPeriod1Classes.map((p1Entry) => {
+                    const summary = getPeriod1AttendanceSummary(p1Entry.class_id, p1Entry.class_name);
                     return (
                       <div
-                        key={st.id}
-                        className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-muted/30 transition-colors"
+                        key={p1Entry.id}
+                        className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all flex flex-col justify-between space-y-4 relative overflow-hidden"
                       >
-                        {/* Student Info */}
-                        <div className="flex items-center gap-3">
-                          <span className="font-mono text-sm font-bold text-primary w-8 text-center shrink-0">
-                            #{st.roll_number}
-                          </span>
+                        <div className="space-y-3">
+                          {/* Card Header Badges */}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
+                              <Clock className="size-3.5" />
+                              Period 1
+                            </span>
 
-                          {st.avatar_url ? (
-                            <img
-                              src={st.avatar_url}
-                              alt={st.first_name}
-                              className="size-11 rounded-full object-cover border border-primary/20 shrink-0"
-                            />
-                          ) : (
-                            <div className="grid size-11 place-items-center rounded-full bg-primary/10 text-primary font-bold text-sm shrink-0">
-                              {st.first_name.charAt(0)}
-                            </div>
-                          )}
+                            {summary.isSubmitted ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 text-[11px] font-bold border border-emerald-300/60 dark:border-emerald-800">
+                                <CheckCircle2 className="size-3" />
+                                Recorded
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2.5 py-0.5 text-[11px] font-bold border border-amber-300/60 dark:border-amber-800">
+                                <AlertCircle className="size-3" />
+                                Pending Today
+                              </span>
+                            )}
+                          </div>
 
+                          {/* Class & Subject */}
                           <div>
-                            <p className="font-bold text-foreground text-sm sm:text-base">
-                              {st.first_name} {st.last_name}
+                            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                              Class
+                            </span>
+                            <h3 className="text-xl font-extrabold text-foreground tracking-tight">
+                              {p1Entry.class_name}
+                            </h3>
+                            <p className="text-sm font-semibold text-primary mt-0.5">
+                              {p1Entry.subject}
                             </p>
-                            <p className="text-xs text-muted-foreground">
-                              Class 5 - Section A • Gender: {st.gender || 'Male'}
-                            </p>
+                          </div>
+
+                          {/* Routine Details */}
+                          <div className="text-xs text-muted-foreground space-y-1 pt-2 border-t border-border/60">
+                            <div className="flex items-center justify-between">
+                              <span>Time Slot:</span>
+                              <span className="font-semibold text-foreground font-mono">
+                                {p1Entry.time_slot || p1Entry.start_time || 'Period 1'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span>Teacher:</span>
+                              <span className="font-semibold text-foreground">
+                                {p1Entry.teacher_name || profile?.full_name || 'Class Teacher'}
+                              </span>
+                            </div>
+                            {summary.isSubmitted && (
+                              <div className="flex items-center justify-between pt-1 font-semibold text-[11px]">
+                                <span className="text-muted-foreground">Today's Summary:</span>
+                                <span className="text-foreground">
+                                  {summary.presentCount} Present • {summary.absentCount} Absent
+                                  {summary.lateCount > 0 ? ` • ${summary.lateCount} Late` : ''}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        {/* Status Toggle Buttons (Optimized for Mobile Touch) */}
-                        <div className="flex items-center gap-2 self-end sm:self-center">
+                        {/* Action Button */}
+                        <div className="pt-2">
                           <button
                             type="button"
-                            onClick={() => setStudentStatus(st.id, 'present')}
-                            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-all ${
-                              currentStatus === 'present'
-                                ? 'bg-emerald-600 text-white shadow-soft ring-2 ring-emerald-600/30'
-                                : 'border border-border bg-background text-muted-foreground hover:bg-emerald-50 hover:text-emerald-700'
+                            onClick={() => handleOpenAttendanceModal(p1Entry)}
+                            className={`w-full inline-flex items-center justify-center gap-2 rounded-xl py-3 px-4 text-xs font-bold transition-all shadow-soft ${
+                              summary.isSubmitted
+                                ? 'border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20'
+                                : 'bg-primary text-primary-foreground hover:bg-primary-dark'
                             }`}
                           >
-                            <CheckCircle2 className="size-4" />
-                            Present
+                            <CheckSquare className="size-4" />
+                            {summary.isSubmitted ? 'EDIT ATTENDANCE' : 'MARK ATTENDANCE'}
                           </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-                          <button
-                            type="button"
-                            onClick={() => setStudentStatus(st.id, 'absent')}
-                            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-all ${
-                              currentStatus === 'absent'
-                                ? 'bg-rose-600 text-white shadow-soft ring-2 ring-rose-600/30'
-                                : 'border border-border bg-background text-muted-foreground hover:bg-rose-50 hover:text-rose-700'
-                            }`}
-                          >
-                            <XCircle className="size-4" />
-                            Absent
-                          </button>
+            {/* ================================================== */}
+            {/* SECTION 2: TODAY'S CLASS ROUTINE (MY ROUTINE)       */}
+            {/* ================================================== */}
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-5">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-muted text-foreground px-3 py-1 text-xs font-extrabold uppercase tracking-wide border border-border">
+                      <Clock className="size-3.5 text-primary" />
+                      Section 2 • Teaching Schedule
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-extrabold text-foreground tracking-tight mt-1.5">
+                    My Class Routine
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Your scheduled teaching periods across the week. Strictly informational — attendance is only taken during Period 1.
+                  </p>
+                </div>
 
-                          <button
-                            type="button"
-                            onClick={() => setStudentStatus(st.id, 'late')}
-                            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold transition-all ${
-                              currentStatus === 'late'
-                                ? 'bg-amber-500 text-white shadow-soft ring-2 ring-amber-500/30'
-                                : 'border border-border bg-background text-muted-foreground hover:bg-amber-50 hover:text-amber-700'
+                {/* Day Navigation Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+                  {(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as DayOfWeek[]).map((day) => {
+                    const active = selectedRoutineDay === day;
+                    const isToday = todayIndiaDay === day;
+                    const count = weeklyRoutine.filter((r) => r.day_of_week === day).length;
+
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => setSelectedRoutineDay(day)}
+                        className={`rounded-xl px-3.5 py-2 text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                          active
+                            ? 'bg-primary text-primary-foreground shadow-soft'
+                            : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                      >
+                        {day}
+                        {isToday && (
+                          <span
+                            className={`rounded-md px-1 py-0.2 text-[9px] font-extrabold uppercase ${
+                              active ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-primary/10 text-primary'
                             }`}
                           >
-                            <Clock className="size-4" />
-                            Late
-                          </button>
+                            Today
+                          </span>
+                        )}
+                        <span
+                          className={`rounded-full px-1.5 py-0.2 text-[10px] ${
+                            active ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Selected Day Routine Grid */}
+              {selectedDayRoutine.length === 0 ? (
+                <div className="rounded-2xl border border-border bg-muted/20 p-8 text-center space-y-2">
+                  <div className="size-12 rounded-full bg-muted text-muted-foreground grid place-items-center mx-auto">
+                    <Clock className="size-6" />
+                  </div>
+                  <h3 className="text-base font-bold text-foreground">
+                    No classes scheduled for {selectedRoutineDay}
+                  </h3>
+                  <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                    You do not have any teaching periods scheduled on {selectedRoutineDay}. Check other days above.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {selectedDayRoutine.map((item) => {
+                    const isPeriod1 = Number(item.period_number) === 1;
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-3xl border p-5 shadow-soft transition-all space-y-3 flex flex-col justify-between ${
+                          isPeriod1
+                            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50/30 dark:bg-emerald-950/20'
+                            : 'border-border bg-card'
+                        }`}
+                      >
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2 border-b border-border/50 pb-2.5">
+                            <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
+                              <Clock className="size-3.5" />
+                              Period {item.period_number}
+                            </span>
+
+                            {isPeriod1 ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 text-[10px] font-extrabold border border-emerald-300/60 dark:border-emerald-800">
+                                <CheckCircle2 className="size-3" />
+                                Attendance Assigned
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                Regular Class
+                              </span>
+                            )}
+                          </div>
+
+                          <div>
+                            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                              Class {item.class_name}
+                            </span>
+                            <h4 className="text-lg font-extrabold text-foreground tracking-tight">
+                              {item.subject}
+                            </h4>
+                          </div>
+
+                          <div className="pt-2 border-t border-border/50 text-xs text-muted-foreground space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span>Time:</span>
+                              <span className="font-semibold text-foreground font-mono">
+                                {item.time_slot || item.start_time || `Period ${item.period_number}`}
+                              </span>
+                            </div>
+                            {item.room_number && (
+                              <div className="flex items-center justify-between">
+                                <span>Room:</span>
+                                <span className="font-semibold text-foreground font-mono">
+                                  {item.room_number}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1741,6 +2035,229 @@ function TeacherDashboardPage() {
           onConfirm={confirmDeleteExam}
           onCancel={() => setDeleteExamModal(null)}
         />
+
+        {/* ATTENDANCE SHEET MODAL / POPUP */}
+        {isAttendanceModalOpen && activePeriod1Entry && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="w-full max-w-4xl max-h-[92vh] rounded-3xl border border-border bg-card shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+              {/* Modal Header */}
+              <div className="p-5 sm:p-6 border-b border-border bg-muted/40 flex items-start justify-between gap-4 shrink-0">
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1 text-xs font-extrabold text-primary-foreground shadow-xs">
+                      <CheckSquare className="size-3.5" />
+                      1st Period Attendance Register
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-xl bg-primary/10 text-primary px-2.5 py-1 text-xs font-bold font-mono border border-primary/20">
+                      <Calendar className="size-3" />
+                      {formatDateDDMMYYYY(todayIndiaDate)} ({todayIndiaDay})
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-xl bg-muted px-2.5 py-1 text-xs font-bold text-foreground border border-border">
+                      <Clock className="size-3 text-muted-foreground" />
+                      Period 1 ({activePeriod1Entry.time_slot || activePeriod1Entry.start_time || 'Morning Slot'})
+                    </span>
+                  </div>
+
+                  <div className="pt-1">
+                    <h3 className="text-xl sm:text-2xl font-extrabold text-foreground tracking-tight">
+                      Class {activePeriod1Entry.class_name} • {activePeriod1Entry.subject}
+                    </h3>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                      <User className="size-3.5 text-primary" />
+                      Assigned Teacher: <strong className="text-foreground">{activePeriod1Entry.teacher_name || profile?.full_name || 'Class Teacher'}</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAttendanceModalOpen(false)}
+                  className="rounded-xl border border-border p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors shrink-0"
+                  title="Close Modal"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+
+              {/* Modal Quick Batch Controls & Live Summary Bar */}
+              <div className="p-4 sm:p-5 border-b border-border/80 bg-background flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                {/* Batch Action Buttons */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground mr-1">Quick:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleModalMarkAll('present')}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 dark:border-emerald-800 px-3 py-1.5 text-xs font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 transition-colors"
+                  >
+                    <CheckCheck className="size-3.5" />
+                    Mark All Present
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModalMarkAll('absent')}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/50 dark:border-rose-800 px-3 py-1.5 text-xs font-bold text-rose-800 dark:text-rose-300 hover:bg-rose-100 transition-colors"
+                  >
+                    <Ban className="size-3.5" />
+                    Mark All Absent
+                  </button>
+                </div>
+
+                {/* Live Counter Badges */}
+                <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+                  <span className="inline-flex items-center gap-1 rounded-xl bg-muted px-2.5 py-1 text-xs font-extrabold text-foreground border border-border">
+                    Total: {modalStudents.length}
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-xl bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-1 text-xs font-extrabold border border-emerald-300/60 dark:border-emerald-800">
+                    <CheckCircle2 className="size-3" />
+                    {modalStudents.filter((st) => (modalStatusMap[st.id] || 'present') === 'present').length} Present
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-xl bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 px-2.5 py-1 text-xs font-extrabold border border-rose-300/60 dark:border-rose-800">
+                    <XCircle className="size-3" />
+                    {modalStudents.filter((st) => modalStatusMap[st.id] === 'absent').length} Absent
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-xl bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2.5 py-1 text-xs font-extrabold border border-amber-300/60 dark:border-amber-800">
+                    <Clock className="size-3" />
+                    {modalStudents.filter((st) => (modalStatusMap[st.id] || 'present') === 'present' && Boolean(modalLateMap[st.id])).length} Late
+                  </span>
+                </div>
+              </div>
+
+              {/* Modal Student List (Scrollable Area) */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 divide-y divide-border">
+                {modalLoading ? (
+                  <div className="py-20 text-center space-y-3">
+                    <div className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
+                    <p className="text-xs text-muted-foreground">Loading students enrolled in Class {activePeriod1Entry.class_name}...</p>
+                  </div>
+                ) : modalStudents.length === 0 ? (
+                  <div className="py-16 text-center text-xs text-muted-foreground space-y-2">
+                    <Users className="size-8 mx-auto text-muted-foreground/60" />
+                    <p className="font-bold text-foreground">No students enrolled in Class {activePeriod1Entry.class_name}.</p>
+                    <p>Ensure students are assigned to Class {activePeriod1Entry.class_name} in the system.</p>
+                  </div>
+                ) : (
+                  modalStudents.map((st) => {
+                    const status = modalStatusMap[st.id] || 'present';
+                    const isLate = Boolean(modalLateMap[st.id]);
+                    const isPresent = status === 'present';
+
+                    return (
+                      <div
+                        key={st.id}
+                        className="py-3 sm:py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/20 px-2 rounded-2xl transition-colors"
+                      >
+                        {/* Student Info */}
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-sm font-extrabold text-primary w-9 text-center shrink-0 bg-primary/10 rounded-lg py-1">
+                            #{st.roll_number || '00'}
+                          </span>
+
+                          {st.avatar_url ? (
+                            <img
+                              src={st.avatar_url}
+                              alt={st.first_name}
+                              className="size-10 rounded-full object-cover border border-border shrink-0"
+                            />
+                          ) : (
+                            <div className="grid size-10 place-items-center rounded-full bg-primary/10 text-primary font-bold text-sm shrink-0">
+                              {st.first_name?.charAt(0) || 'S'}
+                            </div>
+                          )}
+
+                          <div>
+                            <p className="font-bold text-foreground text-sm">
+                              {st.first_name} {st.last_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Class {activePeriod1Entry.class_name} • Gender: {st.gender || 'N/A'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Attendance Actions: Toggle + Late Checkbox */}
+                        <div className="flex items-center gap-3 self-end sm:self-center">
+                          {/* Present / Absent Buttons */}
+                          <div className="inline-flex rounded-xl p-1 bg-muted/60 border border-border">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleModalStatus(st.id, 'present')}
+                              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition-all ${
+                                isPresent
+                                  ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/30'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              <CheckCircle2 className="size-3.5" />
+                              PRESENT
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleModalStatus(st.id, 'absent')}
+                              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-extrabold transition-all ${
+                                !isPresent
+                                  ? 'bg-rose-600 text-white shadow-sm ring-2 ring-rose-600/30'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              <XCircle className="size-3.5" />
+                              ABSENT
+                            </button>
+                          </div>
+
+                          {/* Late Checkbox (Strict: only active if status === 'present') */}
+                          <label
+                            className={`flex items-center gap-1.5 text-xs font-semibold select-none px-2.5 py-1.5 rounded-lg border transition-all ${
+                              isPresent
+                                ? isLate
+                                  ? 'border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200 cursor-pointer'
+                                  : 'border-border bg-background text-muted-foreground hover:bg-muted cursor-pointer'
+                                : 'opacity-30 border-transparent text-muted-foreground cursor-not-allowed'
+                            }`}
+                            title={isPresent ? 'Check if student arrived late' : 'Late only applicable when Present'}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isLate && isPresent}
+                              disabled={!isPresent}
+                              onChange={(e) => handleToggleModalLate(st.id, e.target.checked)}
+                              className="rounded border-input text-amber-600 focus:ring-amber-500 size-3.5 cursor-pointer disabled:cursor-not-allowed"
+                            />
+                            <span>Late</span>
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 sm:p-5 border-t border-border bg-muted/40 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsAttendanceModalOpen(false)}
+                  className="rounded-xl border border-border px-4 py-2.5 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleModalSubmitAttendance}
+                  disabled={modalSaving || modalStudents.length === 0}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                >
+                  {modalSaving ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  {isAlreadySubmittedForActive ? 'UPDATE ATTENDANCE' : 'SAVE ATTENDANCE'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

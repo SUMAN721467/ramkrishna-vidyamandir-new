@@ -126,11 +126,20 @@ CREATE TABLE IF NOT EXISTS public.attendance (
     section_id TEXT NOT NULL,
     date DATE NOT NULL,
     status public.attendance_status NOT NULL,
+    is_late BOOLEAN NOT NULL DEFAULT false,
+    timetable_id TEXT,
     marked_by TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(student_id, date)
 );
+
+-- Ensure is_late and timetable_id columns exist if table was already created
+DO $$ BEGIN
+    ALTER TABLE public.attendance ADD COLUMN IF NOT EXISTS is_late BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE public.attendance ADD COLUMN IF NOT EXISTS timetable_id TEXT;
+EXCEPTION WHEN others THEN null;
+END $$;
 
 -- 9. Notices Table
 CREATE TABLE IF NOT EXISTS public.notices (

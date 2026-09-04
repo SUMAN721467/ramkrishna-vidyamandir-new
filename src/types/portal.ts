@@ -112,6 +112,8 @@ export interface AttendanceRecord {
   section_id: string;
   date: string; // YYYY-MM-DD
   status: AttendanceStatus;
+  is_late?: boolean;
+  timetable_id?: string;
   marked_by: string;
   created_at?: string;
   updated_at?: string;
@@ -121,6 +123,7 @@ export interface AttendanceRecord {
   class_name?: string;
   section_name?: string;
   marked_by_name?: string;
+  teacher_name?: string;
 }
 
 export interface Notice {
