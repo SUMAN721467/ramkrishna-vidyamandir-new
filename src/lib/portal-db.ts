@@ -329,6 +329,65 @@ export async function fetchClasses(): Promise<SchoolClass[]> {
   return store.classes;
 }
 
+export async function addClass(className: string): Promise<SchoolClass> {
+  const trimmed = className.trim();
+  if (!trimmed) throw new Error('Class name is required');
+
+  const safeId = 'c-' + Date.now().toString(36);
+  const newCls: SchoolClass = {
+    id: safeId,
+    name: trimmed,
+    created_at: new Date().toISOString(),
+  };
+
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.from('classes').insert([newCls]).select().single();
+    if (error) {
+      console.error('[Portal DB] Failed to create class in Supabase:', error);
+      throw new Error(`Failed to create class: ${error.message}`);
+    }
+
+    // Auto-create Section A and Section B for this class
+    try {
+      await supabase.from('sections').upsert([
+        { id: `sec-${safeId}-a`, class_id: safeId, name: 'Section A' },
+        { id: `sec-${safeId}-b`, class_id: safeId, name: 'Section B' },
+      ], { onConflict: 'id' });
+    } catch (e) {
+      console.warn('[Portal DB] Notice: default sections auto-create:', e);
+    }
+
+    return data || newCls;
+  }
+
+  store.classes.push(newCls);
+  store.sections.push(
+    { id: `sec-${safeId}-a`, class_id: safeId, name: 'Section A' },
+    { id: `sec-${safeId}-b`, class_id: safeId, name: 'Section B' }
+  );
+  store.save();
+  return newCls;
+}
+
+export async function deleteClass(classId: string): Promise<boolean> {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.from('classes').delete().eq('id', classId);
+    if (error) {
+      console.error('[Portal DB] Failed to delete class in Supabase:', error);
+      throw new Error(`Failed to delete class: ${error.message}`);
+    }
+    try {
+      await supabase.from('sections').delete().eq('class_id', classId);
+    } catch {}
+    return true;
+  }
+
+  store.classes = store.classes.filter((c) => c.id !== classId);
+  store.sections = store.sections.filter((s) => s.class_id !== classId);
+  store.save();
+  return true;
+}
+
 export async function fetchSections(classId?: string): Promise<Section[]> {
   if (isSupabaseConfigured) {
     let query = supabase.from('sections').select('*');
@@ -355,12 +414,98 @@ export async function fetchProfiles(role?: UserRole): Promise<Profile[]> {
       console.error('[Portal DB] Failed to fetch profiles from Supabase:', error);
       throw new Error(`Failed to load user profiles: ${error.message}`);
     }
-    return data || [];
+
+    let profilesList: Profile[] = data ? [...data] : [];
+
+    // If fetching teachers or all profiles, include any teachers from the teachers table
+    if (!role || role === 'teacher') {
+      try {
+        const { data: tchData } = await supabase.from('teachers').select('*');
+        if (tchData && tchData.length > 0) {
+          const profMap = new Map(profilesList.map((p) => [p.id, p]));
+          tchData.forEach((t: any) => {
+            if (!profMap.has(t.id)) {
+              profMap.set(t.id, { ...t, role: 'teacher' as UserRole });
+            } else {
+              // Merge latest teacher data
+              profMap.set(t.id, { ...profMap.get(t.id)!, ...t, role: 'teacher' as UserRole });
+            }
+          });
+          profilesList = Array.from(profMap.values());
+        }
+      } catch (e) {
+        // Fall back gracefully if teachers table not queried
+        console.warn('[Portal DB] teachers table query notice:', e);
+      }
+    }
+
+    return profilesList;
   }
   if (role) {
     return store.profiles.filter((p) => p.role === role);
   }
   return store.profiles;
+}
+
+export async function syncProfilesToTeachersTable(teacherProfiles: Profile[]): Promise<void> {
+  if (!isSupabaseConfigured || teacherProfiles.length === 0) return;
+  try {
+    const payload = teacherProfiles.map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      email: p.email && p.email !== 'NA' ? p.email : null,
+      phone: p.phone || null,
+      qualification: p.qualification || null,
+      specialized_subject: p.specialized_subject || null,
+      address: p.address || null,
+      aadhar_number: p.aadhar_number || null,
+      avatar_url: p.avatar_url || null,
+      portal_password: p.portal_password,
+      status: 'active',
+      created_at: p.created_at || new Date().toISOString(),
+      updated_at: p.updated_at || new Date().toISOString(),
+    }));
+
+    const { error } = await supabase.from('teachers').upsert(payload, { onConflict: 'id' });
+    if (error) {
+      // Fallback: try direct insert
+      await supabase.from('teachers').insert(payload);
+    }
+  } catch (e) {
+    console.warn('[Portal DB] syncProfilesToTeachersTable notice:', e);
+  }
+}
+
+export async function fetchTeachers(): Promise<Profile[]> {
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('teachers')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        return data.map((t: any) => ({
+          ...t,
+          role: 'teacher' as UserRole,
+        }));
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Querying teachers table error, falling back to profiles:', e);
+    }
+
+    // Fallback to profiles table if teachers table is newly created or empty
+    const { data: profData } = await supabase.from('profiles').select('*').eq('role', 'teacher');
+    const teacherProfiles = (profData || []).map((t: any) => ({ ...t, role: 'teacher' as UserRole }));
+
+    // Auto-heal: If profiles has teachers but teachers table was empty, sync them into teachers table immediately!
+    if (teacherProfiles.length > 0) {
+      syncProfilesToTeachersTable(teacherProfiles).catch(() => {});
+    }
+
+    return teacherProfiles;
+  }
+  return store.profiles.filter((p) => p.role === 'teacher');
 }
 
 export async function fetchStudents(classId?: string, sectionId?: string): Promise<Student[]> {
@@ -399,27 +544,30 @@ export async function fetchStudents(classId?: string, sectionId?: string): Promi
 }
 
 export async function clearTeacherClasses(): Promise<void> {
-  if (isSupabaseConfigured) {
-    try {
-      await supabase.from('teacher_classes').delete().neq('class_id', '__all__');
-    } catch (e) {
-      console.warn('[Portal DB] Failed to clear teacher_classes:', e);
-    }
-  }
+  // teacher_classes table deleted as requested
   store.teacherAssignments = [];
   store.save();
 }
 
 export async function fetchTeacherClasses(_teacherId?: string) {
   const [classes, sections] = await Promise.all([fetchClasses(), fetchSections()]);
-  return classes.flatMap((cls) =>
-    sections.map((sec) => ({
+  const defaultSections: Section[] = [
+    { id: 's-a', class_id: 'all', name: 'Section A' },
+    { id: 's-b', class_id: 'all', name: 'Section B' },
+  ];
+  const activeSections = sections && sections.length > 0 ? sections : defaultSections;
+
+  return classes.flatMap((cls) => {
+    // Find sections specific to this class, or marked as 'all'
+    const classSecs = activeSections.filter((s) => s.class_id === cls.id || s.class_id === 'all');
+    const secsToUse = classSecs.length > 0 ? classSecs : defaultSections;
+    return secsToUse.map((sec) => ({
       class_id: cls.id,
       section_id: sec.id,
       class_name: cls.name,
       section_name: sec.name,
-    }))
-  );
+    }));
+  });
 }
 
 export async function fetchParentChildren(parentId: string): Promise<Student[]> {
@@ -641,6 +789,23 @@ const VALID_PROFILE_COLUMNS = new Set([
   'created_at',
   'updated_at',
 ]);
+
+const VALID_TEACHER_COLUMNS = new Set([
+  'id',
+  'full_name',
+  'email',
+  'phone',
+  'qualification',
+  'specialized_subject',
+  'address',
+  'aadhar_number',
+  'avatar_url',
+  'portal_password',
+  'status',
+  'created_at',
+  'updated_at',
+]);
+
 
 function sanitizeStudentPayload(obj: Record<string, any>): Record<string, any> {
   const sanitized: Record<string, any> = {};
@@ -909,16 +1074,27 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
     if (profileData.role === 'teacher') {
       if (isSupabaseConfigured) {
         try {
-          const { data: existing } = await supabase.from('profiles').select('id').eq('role', 'teacher');
+          const [profRes, tchRes] = await Promise.allSettled([
+            supabase.from('profiles').select('id').eq('role', 'teacher'),
+            supabase.from('teachers').select('id'),
+          ]);
+          const existingIds: string[] = [];
+          if (profRes.status === 'fulfilled' && profRes.value.data) {
+            profRes.value.data.forEach((p: any) => existingIds.push(p.id));
+          }
+          if (tchRes.status === 'fulfilled' && tchRes.value.data) {
+            tchRes.value.data.forEach((t: any) => existingIds.push(t.id));
+          }
+
           let nextNum = 1;
-          if (existing && existing.length > 0) {
-            const nums = existing
-              .map((p) => {
-                const match = String(p.id).match(/^(?:Tchr|tchr|t)-?(\d+)$/i);
+          if (existingIds.length > 0) {
+            const nums = existingIds
+              .map((id) => {
+                const match = String(id).match(/^(?:Tchr|tchr|t)-?(\d+)$/i);
                 return match ? parseInt(match[1], 10) : 0;
               })
               .filter((n) => !isNaN(n) && n > 0);
-            nextNum = nums.length > 0 ? Math.max(...nums) + 1 : existing.length + 1;
+            nextNum = nums.length > 0 ? Math.max(...nums) + 1 : existingIds.length + 1;
           }
           newId = `Tchr-${nextNum}`;
         } catch {
@@ -950,9 +1126,41 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
   };
 
   if (isSupabaseConfigured) {
+    // If role is teacher, also insert directly into teachers table!
+    if (profileData.role === 'teacher') {
+      try {
+        const teacherPayload: Record<string, any> = {
+          id: newProf.id,
+          full_name: newProf.full_name,
+          email: newProf.email && newProf.email !== 'NA' ? newProf.email : null,
+          phone: newProf.phone || null,
+          qualification: newProf.qualification || null,
+          specialized_subject: newProf.specialized_subject || null,
+          address: newProf.address || null,
+          aadhar_number: newProf.aadhar_number || null,
+          avatar_url: newProf.avatar_url || null,
+          portal_password: newProf.portal_password,
+          status: 'active',
+          created_at: now,
+          updated_at: now,
+        };
+        const { error: tchErr } = await supabase.from('teachers').upsert([teacherPayload], { onConflict: 'id' });
+        if (tchErr) {
+          console.warn('[Portal DB] Upsert to teachers table had issue, attempting direct insert:', tchErr);
+          await supabase.from('teachers').insert([teacherPayload]);
+        }
+      } catch (tchErr) {
+        console.warn('[Portal DB] Notice: Unable to direct insert into teachers table:', tchErr);
+      }
+    }
+
     const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
     if (error || !data) {
       console.error('[Portal DB] Failed to add profile to Supabase:', error);
+      // If teacher was already inserted in teachers table, return newProf
+      if (profileData.role === 'teacher') {
+        return newProf;
+      }
       throw new Error(`Database error: ${error?.message || 'Failed to create profile.'}`);
     }
     return data;
@@ -966,11 +1174,10 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
 
 export async function deleteProfile(id: string): Promise<boolean> {
   if (isSupabaseConfigured) {
-    const { error } = await supabase.from('profiles').delete().eq('id', id);
-    if (error) {
-      console.error('[Portal DB] Failed to delete profile:', error);
-      throw new Error(`Database error: ${error.message}`);
-    }
+    await Promise.allSettled([
+      supabase.from('profiles').delete().eq('id', id),
+      supabase.from('teachers').delete().eq('id', id),
+    ]);
     return true;
   }
 
@@ -1009,6 +1216,21 @@ export async function updateProfile(id: string, updates: Partial<Profile>): Prom
       await supabase.from('profiles').update(fallbackSanitized).eq('id', id);
     }
 
+    // Also sync to teachers table
+    try {
+      const teacherUpdates: Record<string, any> = { updated_at: now };
+      for (const [k, v] of Object.entries(updates)) {
+        if (VALID_TEACHER_COLUMNS.has(k) && v !== undefined) {
+          teacherUpdates[k] = v;
+        }
+      }
+      if (Object.keys(teacherUpdates).length > 1) {
+        await supabase.from('teachers').update(teacherUpdates).eq('id', id);
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Syncing update to teachers table warning:', e);
+    }
+
     const pIdx = store.profiles.findIndex((p) => p.id === id);
     if (pIdx >= 0) {
       store.profiles[pIdx] = { ...store.profiles[pIdx], ...updates, updated_at: now };
@@ -1033,6 +1255,7 @@ export async function updateUserPassword(targetId: string, newPassword: string):
     const results = await Promise.allSettled([
       supabase.from('students').update({ portal_password: newPassword, updated_at: now }).eq('id', targetId),
       supabase.from('profiles').update({ portal_password: newPassword, updated_at: now }).eq('id', targetId),
+      supabase.from('teachers').update({ portal_password: newPassword, updated_at: now }).eq('id', targetId),
     ]);
 
     const hasSuccess = results.some((r) => r.status === 'fulfilled');

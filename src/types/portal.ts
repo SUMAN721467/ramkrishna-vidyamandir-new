@@ -66,17 +66,19 @@ export interface Student {
 }
 
 export interface Teacher {
-  id: string; // References profiles.id
-  employee_id: string;
+  id: string;
+  full_name: string;
+  email?: string;
+  phone?: string;
   qualification?: string;
-  status: StudentStatus;
-  profile?: Profile;
-  assigned_classes?: {
-    class_id: string;
-    section_id: string;
-    class_name?: string;
-    section_name?: string;
-  }[];
+  specialized_subject?: string;
+  address?: string;
+  aadhar_number?: string;
+  avatar_url?: string;
+  portal_password?: string;
+  status?: StudentStatus;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Parent {

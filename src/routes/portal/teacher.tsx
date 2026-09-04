@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import {
   CheckCircle2,
@@ -43,13 +43,14 @@ import {
   addScheduledExam,
   updateScheduledExam,
   deleteScheduledExam,
+  fetchSubjects,
 } from '../../lib/portal-db';
 import { formatDateDDMMYYYY, formatDateSlash, parseDateToISO } from '../../lib/format';
 import { DateInput } from '../../components/ui/date-input';
 import { ConfirmDialog } from '../../components/portal/ConfirmDialog';
 import { uploadProfilePhoto } from '../../lib/storage';
 import { toast } from 'sonner';
-import type { Student, AttendanceRecord, Notice, AttendanceStatus, StudentMark, ScheduledExam } from '../../types/portal';
+import type { Student, AttendanceRecord, Notice, AttendanceStatus, StudentMark, ScheduledExam, Subject } from '../../types/portal';
 
 export const Route = createFileRoute('/portal/teacher')({
   component: TeacherDashboardPage,
@@ -90,6 +91,7 @@ function TeacherDashboardPage() {
   const [fullMarks, setFullMarks] = useState<number>(100);
   const [marksMap, setMarksMap] = useState<Record<string, { marks_obtained: string; remarks: string }>>({});
   const [publishedMarks, setPublishedMarks] = useState<StudentMark[]>([]);
+  const [availableSubjects, setAvailableSubjects] = useState<Subject[]>([]);
 
   // Exam Scheduling State
   const [scheduledExams, setScheduledExams] = useState<ScheduledExam[]>([]);
@@ -183,23 +185,28 @@ function TeacherDashboardPage() {
     }
   }, [role, authLoading, navigate]);
 
-  // Load Teacher Classes
+  // Load Teacher Classes & Subjects
   useEffect(() => {
     async function loadTeacherClasses() {
       if (!user) return;
       setLoading(true);
       try {
-        const classes = await fetchTeacherClasses(user.id);
+        const [classes, nots, subs] = await Promise.all([
+          fetchTeacherClasses(user.id),
+          fetchNotices('teacher'),
+          fetchSubjects(),
+        ]);
+
         setAssignedClasses(classes);
+        setAvailableSubjects(subs);
         if (classes.length > 0) {
           setSelectedClassId(classes[0].class_id);
           setSelectedSectionId(classes[0].section_id);
         }
 
-        const nots = await fetchNotices('teacher');
         setNotices(nots);
       } catch (err: any) {
-        console.error('[Teacher Dashboard] Class load error:', err);
+        console.error('[Teacher Dashboard] Class/Subject load error:', err);
         toast.error(err?.message || 'Failed to load teacher class assignments');
       } finally {
         setLoading(false);
@@ -207,6 +214,24 @@ function TeacherDashboardPage() {
     }
     loadTeacherClasses();
   }, [user]);
+
+  // Subjects filtered for the currently selected class
+  const classSubjects = useMemo(() => {
+    if (!availableSubjects || availableSubjects.length === 0) return [];
+    const filtered = availableSubjects.filter(
+      (s) => !s.class_id || s.class_id === 'all' || s.class_id === selectedClassId
+    );
+    return filtered.length > 0 ? filtered : availableSubjects;
+  }, [availableSubjects, selectedClassId]);
+
+  // Keep subjectName aligned with available class subjects
+  useEffect(() => {
+    if (classSubjects.length > 0) {
+      if (!classSubjects.some((s) => s.name === subjectName)) {
+        setSubjectName(classSubjects[0].name);
+      }
+    }
+  }, [classSubjects, selectedClassId]);
 
   // Load Students and existing attendance when Class or Date changes
   useEffect(() => {
@@ -878,13 +903,23 @@ function TeacherDashboardPage() {
                     onChange={(e) => setSubjectName(e.target.value)}
                     className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   >
-                    <option value="Bengali (1st Language)">Bengali (1st Language)</option>
-                    <option value="English (2nd Language)">English (2nd Language)</option>
-                    <option value="Mathematics">Mathematics</option>
-                    <option value="Science & Environment">Science & Environment</option>
-                    <option value="History & Geography">History & Geography</option>
-                    <option value="Computer & Practical">Computer & Practical</option>
-                    <option value="General Knowledge">General Knowledge</option>
+                    {classSubjects.length > 0 ? (
+                      classSubjects.map((sub) => (
+                        <option key={sub.id} value={sub.name}>
+                          {sub.name}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="Bengali (1st Language)">Bengali (1st Language)</option>
+                        <option value="English (2nd Language)">English (2nd Language)</option>
+                        <option value="Mathematics">Mathematics</option>
+                        <option value="Science & Environment">Science & Environment</option>
+                        <option value="History & Geography">History & Geography</option>
+                        <option value="Computer & Practical">Computer & Practical</option>
+                        <option value="General Knowledge">General Knowledge</option>
+                      </>
+                    )}
                   </select>
                 </div>
 

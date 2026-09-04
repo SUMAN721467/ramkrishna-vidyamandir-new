@@ -92,13 +92,21 @@ DO $$ BEGIN
 EXCEPTION WHEN others THEN null;
 END $$;
 
--- 6. Teacher Classes Table
-CREATE TABLE IF NOT EXISTS public.teacher_classes (
-    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-    teacher_id TEXT NOT NULL,
-    class_id TEXT NOT NULL,
-    section_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- 6. Teachers Table (Without class)
+CREATE TABLE IF NOT EXISTS public.teachers (
+    id TEXT PRIMARY KEY,
+    full_name TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
+    qualification TEXT,
+    specialized_subject TEXT,
+    address TEXT,
+    aadhar_number TEXT,
+    avatar_url TEXT,
+    portal_password TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- 7. Parent Student Links Table
@@ -176,7 +184,7 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.teacher_classes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.teachers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.parent_students ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
@@ -203,8 +211,8 @@ DO $$ BEGIN
 EXCEPTION WHEN others THEN null; END $$;
 
 DO $$ BEGIN
-    DROP POLICY IF EXISTS "Public access to teacher_classes" ON public.teacher_classes;
-    CREATE POLICY "Public access to teacher_classes" ON public.teacher_classes FOR ALL USING (true);
+    DROP POLICY IF EXISTS "Public access to teachers" ON public.teachers;
+    CREATE POLICY "Public access to teachers" ON public.teachers FOR ALL USING (true);
 EXCEPTION WHEN others THEN null; END $$;
 
 DO $$ BEGIN
@@ -347,3 +355,115 @@ DO $$ BEGIN
     DROP POLICY IF EXISTS "Public avatar access" ON storage.objects;
     CREATE POLICY "Public avatar access" ON storage.objects FOR ALL USING (bucket_id = 'avatars');
 EXCEPTION WHEN others THEN null; END $$;
+
+-- ==========================================
+-- AUTO-SYNC: TEACHERS <-> PROFILES
+-- ==========================================
+
+-- When teacher is added/updated in teachers table, sync to profiles table for portal auth
+CREATE OR REPLACE FUNCTION public.sync_teacher_to_profile()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (
+        id, full_name, email, phone, role, qualification,
+        specialized_subject, address, aadhar_number, avatar_url, portal_password, created_at, updated_at
+    )
+    VALUES (
+        NEW.id,
+        NEW.full_name,
+        COALESCE(NEW.email, 'NA'),
+        NEW.phone,
+        'teacher',
+        NEW.qualification,
+        NEW.specialized_subject,
+        NEW.address,
+        NEW.aadhar_number,
+        NEW.avatar_url,
+        NEW.portal_password,
+        NEW.created_at,
+        NEW.updated_at
+    )
+    ON CONFLICT (id) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        email = CASE WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email <> '' THEN EXCLUDED.email ELSE public.profiles.email END,
+        phone = COALESCE(EXCLUDED.phone, public.profiles.phone),
+        role = 'teacher',
+        qualification = COALESCE(EXCLUDED.qualification, public.profiles.qualification),
+        specialized_subject = COALESCE(EXCLUDED.specialized_subject, public.profiles.specialized_subject),
+        address = COALESCE(EXCLUDED.address, public.profiles.address),
+        aadhar_number = COALESCE(EXCLUDED.aadhar_number, public.profiles.aadhar_number),
+        avatar_url = COALESCE(EXCLUDED.avatar_url, public.profiles.avatar_url),
+        portal_password = COALESCE(EXCLUDED.portal_password, public.profiles.portal_password),
+        updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_teacher_to_profile ON public.teachers;
+CREATE TRIGGER trg_sync_teacher_to_profile
+AFTER INSERT OR UPDATE ON public.teachers
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_teacher_to_profile();
+
+-- When teacher is deleted from teachers table, remove from profiles table
+CREATE OR REPLACE FUNCTION public.sync_delete_teacher_from_profile()
+RETURNS TRIGGER AS $$
+BEGIN
+    DELETE FROM public.profiles WHERE id = OLD.id AND role = 'teacher';
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_delete_teacher_from_profile ON public.teachers;
+CREATE TRIGGER trg_sync_delete_teacher_from_profile
+AFTER DELETE ON public.teachers
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_delete_teacher_from_profile();
+
+-- When teacher is added/updated in profiles table, sync to teachers table
+CREATE OR REPLACE FUNCTION public.sync_profile_to_teacher()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.role = 'teacher' THEN
+        INSERT INTO public.teachers (
+            id, full_name, email, phone, qualification,
+            specialized_subject, address, aadhar_number, avatar_url, portal_password, status, created_at, updated_at
+        )
+        VALUES (
+            NEW.id,
+            NEW.full_name,
+            NEW.email,
+            NEW.phone,
+            NEW.qualification,
+            NEW.specialized_subject,
+            NEW.address,
+            NEW.aadhar_number,
+            NEW.avatar_url,
+            NEW.portal_password,
+            'active',
+            COALESCE(NEW.created_at, NOW()),
+            COALESCE(NEW.updated_at, NOW())
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            email = EXCLUDED.email,
+            phone = EXCLUDED.phone,
+            qualification = EXCLUDED.qualification,
+            specialized_subject = EXCLUDED.specialized_subject,
+            address = EXCLUDED.address,
+            aadhar_number = EXCLUDED.aadhar_number,
+            avatar_url = EXCLUDED.avatar_url,
+            portal_password = EXCLUDED.portal_password,
+            updated_at = NOW();
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_profile_to_teacher ON public.profiles;
+CREATE TRIGGER trg_sync_profile_to_teacher
+AFTER INSERT OR UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_profile_to_teacher();
+
+

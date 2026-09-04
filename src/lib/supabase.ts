@@ -64,9 +64,7 @@ class QueryBuilder {
   upsert(data: any | any[], opts?: { onConflict?: string }) {
     this.action = 'upsert';
     this.bodyData = data;
-    if (opts?.onConflict) {
-      this.onConflictCol = opts.onConflict;
-    }
+    this.onConflictCol = opts?.onConflict || 'id';
     return this;
   }
 

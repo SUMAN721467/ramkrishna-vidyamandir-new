@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { fetchProfiles, fetchStudents, store, addProfile, generateDefaultPassword, generateTeacherDefaultPassword } from '../lib/portal-db';
+import { fetchProfiles, fetchTeachers, fetchStudents, store, addProfile, generateDefaultPassword, generateTeacherDefaultPassword } from '../lib/portal-db';
 import type { Profile, Student, UserRole } from '../types/portal';
 
 interface AuthContextType {
@@ -206,15 +206,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: true, role: 'admin' };
       }
 
-      // Fetch latest profiles and students (from Supabase in production, or store in demo)
-      const profiles = await fetchProfiles();
-      const dbStudents = await fetchStudents();
+      // Fetch latest profiles, teachers, and students (from Supabase in production, or store in demo)
+      const [profiles, dbStudents, dbTeachers] = await Promise.all([
+        fetchProfiles(),
+        fetchStudents(),
+        fetchTeachers(),
+      ]);
 
       const candidateStudents = dbStudents.filter(
         (s) => (s.email && s.email.toLowerCase() === cleanInput) || isPhoneMatch(s.phone)
       );
 
-      const matchedProfile = profiles.find(
+      const allProfiles = [...profiles];
+      dbTeachers.forEach((t) => {
+        if (!allProfiles.some((p) => p.id === t.id)) {
+          allProfiles.push(t);
+        }
+      });
+
+      const matchedProfile = allProfiles.find(
         (p) => p.email.toLowerCase() === cleanInput || isPhoneMatch(p.phone)
       );
 

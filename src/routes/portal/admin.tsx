@@ -35,12 +35,15 @@ import {
   Lock,
   Save,
   Camera,
+  School,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PortalHeader } from '../../components/portal/PortalHeader';
 import { ConfirmDialog } from '../../components/portal/ConfirmDialog';
 import {
   fetchClasses,
+  addClass,
+  deleteClass,
   fetchSections,
   fetchProfiles,
   fetchStudents,
@@ -63,7 +66,7 @@ import {
   generateTeacherDefaultPassword,
   isSyntheticEmail,
   formatDisplayEmail,
-  clearTeacherClasses,
+  fetchTeachers,
   updateUserPassword,
   fetchScheduledExams,
   addScheduledExam,
@@ -180,6 +183,12 @@ function AdminDashboardPage() {
   const [deleteExamModal, setDeleteExamModal] = useState<{ id: string; name: string } | null>(null);
   const [deleteTimetableModal, setDeleteTimetableModal] = useState<{ id: string; description: string } | null>(null);
   const [deleteNoticeModal, setDeleteNoticeModal] = useState<{ id: string; title: string } | null>(null);
+  const [deleteClassModal, setDeleteClassModal] = useState<{ id: string; name: string } | null>(null);
+
+  // Class Management State
+  const [showClassModal, setShowClassModal] = useState(false);
+  const [newClassName, setNewClassName] = useState('');
+  const [savingClass, setSavingClass] = useState(false);
 
   // Exam Scheduling Form & Modal state
   const [showExamModal, setShowExamModal] = useState(false);
@@ -325,6 +334,7 @@ function AdminDashboardPage() {
       const sec = await fetchSections();
       const st = await fetchStudents();
       const profs = await fetchProfiles();
+      const tchs = await fetchTeachers();
       const att = await fetchAttendance({});
       const nots = await fetchNotices();
       const ex = await fetchScheduledExams();
@@ -334,15 +344,13 @@ function AdminDashboardPage() {
       setClasses(cls);
       setSections(sec);
       setStudents(st);
-      setTeachers(profs.filter((p) => p.role === 'teacher'));
+      setTeachers(tchs.length > 0 ? tchs : profs.filter((p) => p.role === 'teacher'));
       setParents(profs.filter((p) => p.role === 'parent'));
       setAttendanceRecords(att);
       setNotices(nots);
       setScheduledExams(ex);
       setClassTimetables(tt);
       setSubjects(subs);
-
-      clearTeacherClasses().catch(() => {});
 
       if (cls.length > 0) {
         setStudentForm((prev) => ({ ...prev, class_id: cls[0].id }));
@@ -511,6 +519,40 @@ function AdminDashboardPage() {
       loadData();
     } catch (err: any) {
       toast.error(err?.message || 'Failed to delete timetable slot');
+    }
+  };
+
+  // Class Management Handlers
+  const handleSaveClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newClassName.trim();
+    if (!trimmed) {
+      toast.error('Please enter a class name.');
+      return;
+    }
+    setSavingClass(true);
+    try {
+      await addClass(trimmed);
+      toast.success(`Class "${trimmed}" added successfully!`);
+      setShowClassModal(false);
+      setNewClassName('');
+      loadData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to create class');
+    } finally {
+      setSavingClass(false);
+    }
+  };
+
+  const confirmDeleteClass = async () => {
+    if (!deleteClassModal) return;
+    try {
+      await deleteClass(deleteClassModal.id);
+      toast.success(`Class "${deleteClassModal.name}" deleted successfully.`);
+      setDeleteClassModal(null);
+      loadData();
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete class');
     }
   };
 
@@ -956,6 +998,7 @@ function AdminDashboardPage() {
               { id: 'overview', label: 'Overview', icon: Layers },
               { id: 'students', label: `Students (${students.length})`, icon: GraduationCap },
               { id: 'teachers', label: `Teachers (${teachers.length})`, icon: UserCheck },
+              { id: 'classes', label: `Classes (${classes.length})`, icon: School },
               { id: 'subjects', label: `Subjects (${subjects.length})`, icon: BookOpen },
               { id: 'attendance', label: 'Attendance & Export', icon: FileSpreadsheet },
               { id: 'timetable', label: `Class Routine (${classTimetables.length})`, icon: Clock },
@@ -2257,6 +2300,91 @@ function AdminDashboardPage() {
             </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* CLASSES MANAGEMENT TAB (ADMIN ONLY) */}
+        {activeTab === 'classes' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <div className="rounded-3xl border border-border bg-card p-6 shadow-soft space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <School className="size-5 text-primary" />
+                    Academic Classes Directory ({classes.length})
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    Manage active grade levels and classes. Classes added here automatically appear in teacher marks entry, attendance registers, and student enrollments.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowClassModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all self-start sm:self-auto cursor-pointer"
+                >
+                  <Plus className="size-4" />
+                  Add New Class
+                </button>
+              </div>
+            </div>
+
+            {/* Classes Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {classes.map((cls) => {
+                const enrolledCount = students.filter((s) => s.class_id === cls.id).length;
+                const classSubs = subjects.filter((s) => s.class_id === cls.id || s.class_id === 'all');
+                const isCoreClass = ['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9', 'c10', 'c11', 'c12'].includes(cls.id);
+
+                return (
+                  <div
+                    key={cls.id}
+                    className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all flex flex-col justify-between gap-4"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="grid size-10 place-items-center rounded-2xl bg-primary/10 text-primary font-extrabold text-sm">
+                            <School className="size-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-base font-bold text-foreground">{cls.name}</h3>
+                            <span className="text-[11px] font-mono text-muted-foreground font-semibold">ID: #{cls.id}</span>
+                          </div>
+                        </div>
+
+                        {!isCoreClass && (
+                          <button
+                            type="button"
+                            onClick={() => setDeleteClassModal({ id: cls.id, name: cls.name })}
+                            className="p-1.5 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                            title="Delete Class"
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="mt-4 pt-3 border-t border-border/60 grid grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-xl bg-muted/40 p-2.5">
+                          <span className="block text-[10px] uppercase font-bold text-muted-foreground">Students</span>
+                          <span className="text-base font-extrabold text-foreground">{enrolledCount}</span>
+                        </div>
+                        <div className="rounded-xl bg-muted/40 p-2.5">
+                          <span className="block text-[10px] uppercase font-bold text-muted-foreground">Subjects</span>
+                          <span className="text-base font-extrabold text-foreground">{classSubs.length}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-border/60 text-[11px] text-muted-foreground font-semibold">
+                      <span>Sections: A & B</span>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold">Active</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -4532,6 +4660,79 @@ function AdminDashboardPage() {
           </div>
         </div>
       )}
+
+      {/* CREATE CLASS MODAL */}
+      {showClassModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-lift text-card-foreground space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border">
+              <div className="flex items-center gap-2">
+                <School className="size-5 text-primary" />
+                <h3 className="text-base font-bold text-foreground">Add New Academic Class</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClassModal(false)}
+                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 cursor-pointer"
+              >
+                <X className="size-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveClass} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                  Class Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={newClassName}
+                  onChange={(e) => setNewClassName(e.target.value)}
+                  placeholder="e.g. Class 11, Nursery, Pre-Primary"
+                  className="w-full rounded-xl border border-input bg-background px-3.5 py-2.5 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  Section A and Section B will automatically be created for this class.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowClassModal(false)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingClass}
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark transition-all disabled:opacity-50"
+                >
+                  {savingClass ? (
+                    <div className="size-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Create Class
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM DELETE CLASS MODAL */}
+      <ConfirmDialog
+        open={Boolean(deleteClassModal)}
+        title="Delete Academic Class"
+        description={`Are you sure you want to delete "${deleteClassModal?.name}"? Any students enrolled in this class should be reassigned first.`}
+        confirmText="Yes, Delete Class"
+        onConfirm={confirmDeleteClass}
+        onCancel={() => setDeleteClassModal(null)}
+      />
     </div>
   );
 }
