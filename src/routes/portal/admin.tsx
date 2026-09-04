@@ -156,7 +156,7 @@ function AdminDashboardPage() {
   });
 
   // Class Timetable Management State
-  const [selectedRoutineClass, setSelectedRoutineClass] = useState<string>('c7');
+  const [selectedRoutineClass, setSelectedRoutineClass] = useState<string>('');
   const [selectedRoutineDay, setSelectedRoutineDay] = useState<DayOfWeek>('Monday');
   const [showTimetableModal, setShowTimetableModal] = useState(false);
   const [editingTimetableEntry, setEditingTimetableEntry] = useState<ClassTimetableEntry | null>(null);
@@ -169,11 +169,11 @@ function AdminDashboardPage() {
     teacher_name: string;
     teacher_id?: string;
   }>({
-    class_id: 'c7',
+    class_id: '',
     day_of_week: 'Monday',
     period_number: 1,
-    subject: 'Bengali (বাংলা)',
-    teacher_name: 'NA',
+    subject: '',
+    teacher_name: '',
     teacher_id: '',
   });
 
@@ -361,11 +361,9 @@ function AdminDashboardPage() {
       setSubjects(subs);
 
       if (cls.length > 0) {
-        setStudentForm((prev) => ({ ...prev, class_id: cls[0].id }));
-        setExamForm((prev) => ({ ...prev, class_id: cls[0].id }));
-        if (!selectedRoutineClass) {
-          setSelectedRoutineClass(cls[0].id);
-        }
+        setStudentForm((prev) => ({ ...prev, class_id: prev.class_id && cls.some((c) => c.id === prev.class_id) ? prev.class_id : cls[0].id }));
+        setExamForm((prev) => ({ ...prev, class_id: prev.class_id && cls.some((c) => c.id === prev.class_id) ? prev.class_id : cls[0].id }));
+        setSelectedRoutineClass((prev) => (prev && cls.some((c) => c.id === prev) ? prev : cls[0].id));
       }
       if (sec.length > 0) {
         setStudentForm((prev) => ({ ...prev, section_id: sec[0].id }));
@@ -451,11 +449,11 @@ function AdminDashboardPage() {
     setEditingTimetableEntry(null);
     const initialTeacher = teachers[0];
     setTimetableForm({
-      class_id: selectedRoutineClass || classes[0]?.id || 'c7',
+      class_id: selectedRoutineClass || classes[0]?.id || '',
       day_of_week: defaultDay || selectedRoutineDay || 'Monday',
       period_number: 1,
-      subject: subjects[0]?.name || 'Bengali (বাংলা)',
-      teacher_name: initialTeacher?.full_name || 'NA',
+      subject: subjects[0]?.name || '',
+      teacher_name: initialTeacher?.full_name || '',
       teacher_id: initialTeacher?.id || '',
     });
     setShowTimetableModal(true);

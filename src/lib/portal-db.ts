@@ -33,52 +33,24 @@ const INITIAL_CLASSES: SchoolClass[] = [
   { id: 'c12', name: 'Class 10' },
 ];
 
-const INITIAL_TIMETABLES: ClassTimetableEntry[] = [
-  // Class 5 (c7) - Monday
-  { id: 'tt-1', class_id: 'c7', day_of_week: 'Monday', period_number: 1, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-2', class_id: 'c7', day_of_week: 'Monday', period_number: 2, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
-  { id: 'tt-3', class_id: 'c7', day_of_week: 'Monday', period_number: 3, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
-  { id: 'tt-4', class_id: 'c7', day_of_week: 'Monday', period_number: 4, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
-  { id: 'tt-5', class_id: 'c7', day_of_week: 'Monday', period_number: 5, subject: 'History (ইতিহাস)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-6', class_id: 'c7', day_of_week: 'Monday', period_number: 6, subject: 'Computer', teacher_name: 'Ranjan Banerjee' },
+export const DUMMY_TIMETABLE_TEACHERS = new Set([
+  'Subrata Sen',
+  'Debashis Mukherjee',
+  'Sourav Ganguly',
+  'Anupam Roy',
+  'Kallol Ghosh',
+  'Priyanka Das',
+  'Ranjan Banerjee',
+]);
 
-  // Class 5 (c7) - Tuesday
-  { id: 'tt-7', class_id: 'c7', day_of_week: 'Tuesday', period_number: 1, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
-  { id: 'tt-8', class_id: 'c7', day_of_week: 'Tuesday', period_number: 2, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-9', class_id: 'c7', day_of_week: 'Tuesday', period_number: 3, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
-  { id: 'tt-10', class_id: 'c7', day_of_week: 'Tuesday', period_number: 4, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
-  { id: 'tt-11', class_id: 'c7', day_of_week: 'Tuesday', period_number: 5, subject: 'Physical Training / P.T.', teacher_name: 'Kallol Ghosh' },
-  { id: 'tt-12', class_id: 'c7', day_of_week: 'Tuesday', period_number: 6, subject: 'Drawing', teacher_name: 'Priyanka Das' },
+export function isDummyTimetableEntry(e: any): boolean {
+  if (!e) return false;
+  if (typeof e.id === 'string' && /^tt-(?:[1-9]|[12][0-9]|3[0-3])$/.test(e.id)) return true;
+  if (e.teacher_name && DUMMY_TIMETABLE_TEACHERS.has(e.teacher_name)) return true;
+  return false;
+}
 
-  // Class 5 (c7) - Wednesday
-  { id: 'tt-13', class_id: 'c7', day_of_week: 'Wednesday', period_number: 1, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
-  { id: 'tt-14', class_id: 'c7', day_of_week: 'Wednesday', period_number: 2, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
-  { id: 'tt-15', class_id: 'c7', day_of_week: 'Wednesday', period_number: 3, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-16', class_id: 'c7', day_of_week: 'Wednesday', period_number: 4, subject: 'Computer', teacher_name: 'Ranjan Banerjee' },
-  { id: 'tt-17', class_id: 'c7', day_of_week: 'Wednesday', period_number: 5, subject: 'Geography (ভূগোল)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-18', class_id: 'c7', day_of_week: 'Wednesday', period_number: 6, subject: 'General Knowledge / G.K. (সাধারণ জ্ঞান)', teacher_name: 'Anupam Roy' },
-
-  // Class 5 (c7) - Thursday
-  { id: 'tt-19', class_id: 'c7', day_of_week: 'Thursday', period_number: 1, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-20', class_id: 'c7', day_of_week: 'Thursday', period_number: 2, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
-  { id: 'tt-21', class_id: 'c7', day_of_week: 'Thursday', period_number: 3, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
-  { id: 'tt-22', class_id: 'c7', day_of_week: 'Thursday', period_number: 4, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
-  { id: 'tt-23', class_id: 'c7', day_of_week: 'Thursday', period_number: 5, subject: 'Environmental Studies / EVS (পরিবেশ শিক্ষা)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-24', class_id: 'c7', day_of_week: 'Thursday', period_number: 6, subject: 'Spoken English', teacher_name: 'Debashis Mukherjee' },
-
-  // Class 5 (c7) - Friday
-  { id: 'tt-25', class_id: 'c7', day_of_week: 'Friday', period_number: 1, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
-  { id: 'tt-26', class_id: 'c7', day_of_week: 'Friday', period_number: 2, subject: 'English (ইংরেজি)', teacher_name: 'Debashis Mukherjee' },
-  { id: 'tt-27', class_id: 'c7', day_of_week: 'Friday', period_number: 3, subject: 'Science (বিজ্ঞান)', teacher_name: 'Anupam Roy' },
-  { id: 'tt-28', class_id: 'c7', day_of_week: 'Friday', period_number: 4, subject: 'Bengali (বাংলা)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-29', class_id: 'c7', day_of_week: 'Friday', period_number: 5, subject: 'History (ইতিহাস)', teacher_name: 'Subrata Sen' },
-  { id: 'tt-30', class_id: 'c7', day_of_week: 'Friday', period_number: 6, subject: 'Sanskrit (সংস্কৃত)', teacher_name: 'Subrata Sen' },
-
-  // Class 5 (c7) - Saturday
-  { id: 'tt-31', class_id: 'c7', day_of_week: 'Saturday', period_number: 1, subject: 'Mathematics (গণিত)', teacher_name: 'Sourav Ganguly' },
-  { id: 'tt-32', class_id: 'c7', day_of_week: 'Saturday', period_number: 2, subject: 'Music / Song', teacher_name: 'Priyanka Das' },
-  { id: 'tt-33', class_id: 'c7', day_of_week: 'Saturday', period_number: 3, subject: 'Physical Training / P.T.', teacher_name: 'Kallol Ghosh' },
-];
+const INITIAL_TIMETABLES: ClassTimetableEntry[] = [];
 
 const INITIAL_SECTIONS: Section[] = [
   { id: 's-a', class_id: 'all', name: 'Section A' },
@@ -193,6 +165,22 @@ const INITIAL_SUBJECTS: Subject[] = [
 ];
 
 // Local Storage sync for demo/offline development mode ONLY
+if (typeof window !== 'undefined') {
+  try {
+    const saved = localStorage.getItem('rkvm_portal_store');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.timetables && Array.isArray(parsed.timetables)) {
+        const filtered = parsed.timetables.filter((t: any) => !isDummyTimetableEntry(t));
+        if (filtered.length !== parsed.timetables.length) {
+          parsed.timetables = filtered;
+          localStorage.setItem('rkvm_portal_store', JSON.stringify(parsed));
+        }
+      }
+    }
+  } catch {}
+}
+
 class PortalStore {
   classes: SchoolClass[] = INITIAL_CLASSES;
   sections: Section[] = INITIAL_SECTIONS;
@@ -204,7 +192,7 @@ class PortalStore {
   attendance: AttendanceRecord[] = [];
   marks: StudentMark[] = [];
   exams: ScheduledExam[] = [];
-  timetables: ClassTimetableEntry[] = INITIAL_TIMETABLES;
+  timetables: ClassTimetableEntry[] = [];
   subjects: Subject[] = INITIAL_SUBJECTS;
 
   constructor() {
@@ -231,7 +219,9 @@ class PortalStore {
           this.attendance = parsed.attendance || [];
           this.marks = parsed.marks || [];
           this.exams = parsed.exams || [];
-          this.timetables = parsed.timetables && parsed.timetables.length > 0 ? parsed.timetables : INITIAL_TIMETABLES;
+          this.timetables = parsed.timetables && Array.isArray(parsed.timetables)
+            ? parsed.timetables.filter((t: any) => !isDummyTimetableEntry(t))
+            : [];
           if (parsed.subjects && parsed.subjects.length > 0 && !parsed.subjects.some((s: any) => s.name === 'Bengali (1st Language)')) {
             this.subjects = parsed.subjects;
           } else {
@@ -671,6 +661,40 @@ export function getIndiaDayOfWeek(date: Date = new Date()): DayOfWeek | 'Sunday'
   }
 }
 
+export function matchTeacher(
+  entry: ClassTimetableEntry,
+  targetId?: string,
+  targetName?: string
+): boolean {
+  if (!entry) return false;
+  const eId = entry.teacher_id?.trim().toLowerCase();
+  const eName = entry.teacher_name?.trim().toLowerCase();
+  const tId = targetId?.trim().toLowerCase();
+  const tName = targetName?.trim().toLowerCase();
+
+  // 1. Direct ID match
+  if (tId && eId && (eId === tId || eId.includes(tId) || tId.includes(eId))) return true;
+
+  // 2. Direct Name match (case-insensitive & trimmed)
+  if (tName && eName) {
+    if (eName === tName) return true;
+    const clean = (s: string) =>
+      s
+        .replace(/^(smt\.?|shri\.?|sri\.?|mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?)\s+/i, '')
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const cE = clean(eName);
+    const cT = clean(tName);
+    if (cE && cT) {
+      if (cE === cT) return true;
+      if (cE.includes(cT) || cT.includes(cE)) return true;
+    }
+  }
+
+  return false;
+}
+
 export async function fetchTeacherTodayRoutine(
   teacherIdentifier: { id?: string; name?: string },
   dayOfWeek?: DayOfWeek | string
@@ -679,20 +703,8 @@ export async function fetchTeacherTodayRoutine(
   if (currentDay === 'Sunday') return [];
 
   const allEntries = await fetchClassTimetables(undefined, currentDay);
-  const targetId = teacherIdentifier.id?.trim().toLowerCase();
-  const targetName = teacherIdentifier.name?.trim().toLowerCase();
-
   return allEntries
-    .filter((e) => {
-      if (e.day_of_week !== currentDay) return false;
-      if (targetId && e.teacher_id && e.teacher_id.trim().toLowerCase() === targetId) return true;
-      if (targetName && e.teacher_name) {
-        const eName = e.teacher_name.trim().toLowerCase();
-        if (eName === targetName) return true;
-        if (targetName.includes(eName) || eName.includes(targetName)) return true;
-      }
-      return false;
-    })
+    .filter((e) => e.day_of_week === currentDay && matchTeacher(e, teacherIdentifier.id, teacherIdentifier.name))
     .sort((a, b) => (Number(a.period_number) || 0) - (Number(b.period_number) || 0));
 }
 
@@ -700,19 +712,8 @@ export async function fetchTeacherWeeklyRoutine(
   teacherIdentifier: { id?: string; name?: string }
 ): Promise<ClassTimetableEntry[]> {
   const allEntries = await fetchClassTimetables();
-  const targetId = teacherIdentifier.id?.trim().toLowerCase();
-  const targetName = teacherIdentifier.name?.trim().toLowerCase();
-
   return allEntries
-    .filter((e) => {
-      if (targetId && e.teacher_id && e.teacher_id.trim().toLowerCase() === targetId) return true;
-      if (targetName && e.teacher_name) {
-        const eName = e.teacher_name.trim().toLowerCase();
-        if (eName === targetName) return true;
-        if (targetName.includes(eName) || eName.includes(targetName)) return true;
-      }
-      return false;
-    })
+    .filter((e) => matchTeacher(e, teacherIdentifier.id, teacherIdentifier.name))
     .sort((a, b) => {
       const dA = DAY_ORDER[a.day_of_week] || 0;
       const dB = DAY_ORDER[b.day_of_week] || 0;
@@ -2135,6 +2136,7 @@ export async function fetchClassTimetable(
   dayOfWeek?: string
 ): Promise<ClassTimetableEntry[]> {
   const timetableMap = new Map<string, ClassTimetableEntry>();
+  let remoteLoaded = false;
 
   if (isSupabaseConfigured) {
     try {
@@ -2153,7 +2155,12 @@ export async function fetchClassTimetable(
 
       const { data, error } = await query;
       if (!error && data && Array.isArray(data)) {
-        data.forEach((entry: any) => timetableMap.set(entry.id, entry));
+        data.forEach((entry: any) => {
+          if (!isDummyTimetableEntry(entry)) {
+            timetableMap.set(entry.id, entry);
+          }
+        });
+        remoteLoaded = true;
       } else if (error) {
         console.warn('[Portal DB] Querying class_timetables notice:', error.message);
       }
@@ -2162,14 +2169,14 @@ export async function fetchClassTimetable(
     }
   }
 
-  // Merge from store.timetables
+  // Always merge non-dummy entries from local/store (so offline or locally-created entries are never dropped)
   store.timetables.forEach((e) => {
-    if (!timetableMap.has(e.id)) {
+    if (!isDummyTimetableEntry(e) && !timetableMap.has(e.id)) {
       timetableMap.set(e.id, e);
     }
   });
 
-  // Merge from localStorage
+  // Merge from localStorage (excluding dummy entries)
   if (typeof window !== 'undefined') {
     try {
       const saved = localStorage.getItem('rkvm_portal_store');
@@ -2177,7 +2184,7 @@ export async function fetchClassTimetable(
         const parsed = JSON.parse(saved);
         if (parsed.timetables && Array.isArray(parsed.timetables)) {
           parsed.timetables.forEach((e: any) => {
-            if (!timetableMap.has(e.id)) {
+            if (!isDummyTimetableEntry(e) && !timetableMap.has(e.id)) {
               timetableMap.set(e.id, e);
             }
           });
@@ -2186,7 +2193,7 @@ export async function fetchClassTimetable(
     } catch {}
   }
 
-  let list = Array.from(timetableMap.values());
+  let list = Array.from(timetableMap.values()).filter((e) => !isDummyTimetableEntry(e));
   if (classId && classId !== 'all') {
     list = list.filter((e) => e.class_id === classId);
   }
@@ -2210,13 +2217,19 @@ export async function fetchClassTimetable(
     }));
 }
 
+export const fetchClassTimetables = fetchClassTimetable;
+
 export async function addClassTimetableEntry(
   entryData: Omit<ClassTimetableEntry, 'id' | 'created_at' | 'updated_at'>
 ): Promise<ClassTimetableEntry> {
   const now = new Date().toISOString();
-  const timeSlot = entryData.time_slot || (entryData.start_time && entryData.end_time ? `${entryData.start_time} - ${entryData.end_time}` : '');
+  const startTime = entryData.start_time || '10:30 AM';
+  const endTime = entryData.end_time || '11:15 AM';
+  const timeSlot = entryData.time_slot || (entryData.start_time && entryData.end_time ? `${entryData.start_time} - ${entryData.end_time}` : `${startTime} - ${endTime}`);
   const newEntry: ClassTimetableEntry = {
     ...entryData,
+    start_time: startTime,
+    end_time: endTime,
     time_slot: timeSlot,
     id: `tt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     created_at: now,
@@ -2355,6 +2368,14 @@ export async function deleteClassTimetableEntry(id: string): Promise<boolean> {
 if (typeof window !== 'undefined') {
   try {
     localStorage.removeItem('rkvm_portal_subjects');
+  } catch {}
+}
+
+// Clean up any legacy dummy timetable entries from Supabase & local storage
+if (isSupabaseConfigured) {
+  try {
+    const dummyIds = Array.from({ length: 33 }, (_, i) => `tt-${i + 1}`);
+    supabase.from('class_timetables').delete().in('id', dummyIds).then(() => {});
   } catch {}
 }
 

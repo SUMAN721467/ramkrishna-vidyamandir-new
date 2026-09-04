@@ -351,7 +351,20 @@ function TeacherDashboardPage() {
 
   useEffect(() => {
     loadTeacherRoutineAndAttendance();
-  }, [user, profile]);
+
+    const handleSync = () => {
+      loadTeacherRoutineAndAttendance();
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleSync);
+      window.addEventListener('storage', handleSync);
+      return () => {
+        window.removeEventListener('focus', handleSync);
+        window.removeEventListener('storage', handleSync);
+      };
+    }
+  }, [user, profile?.id, profile?.full_name]);
 
   // Today's Period 1 classes assigned to this teacher
   const todayPeriod1Classes = useMemo(() => {

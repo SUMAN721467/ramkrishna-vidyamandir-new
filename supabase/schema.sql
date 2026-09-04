@@ -295,8 +295,8 @@ CREATE TABLE IF NOT EXISTS public.class_timetables (
     class_id TEXT NOT NULL,
     day_of_week TEXT NOT NULL,
     period_number INTEGER NOT NULL,
-    start_time TEXT NOT NULL,
-    end_time TEXT NOT NULL,
+    start_time TEXT DEFAULT '10:30 AM',
+    end_time TEXT DEFAULT '11:15 AM',
     time_slot TEXT,
     subject TEXT NOT NULL,
     teacher_name TEXT NOT NULL,
@@ -311,6 +311,14 @@ ALTER TABLE public.class_timetables ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
     DROP POLICY IF EXISTS "Public access to class_timetables" ON public.class_timetables;
     CREATE POLICY "Public access to class_timetables" ON public.class_timetables FOR ALL USING (true);
+EXCEPTION WHEN others THEN null; END $$;
+
+-- Safe migration for start_time & end_time defaults if table already exists
+DO $$ BEGIN
+    ALTER TABLE public.class_timetables ALTER COLUMN start_time DROP NOT NULL;
+    ALTER TABLE public.class_timetables ALTER COLUMN end_time DROP NOT NULL;
+    ALTER TABLE public.class_timetables ALTER COLUMN start_time SET DEFAULT '10:30 AM';
+    ALTER TABLE public.class_timetables ALTER COLUMN end_time SET DEFAULT '11:15 AM';
 EXCEPTION WHEN others THEN null; END $$;
 
 -- 13. Subjects Table
