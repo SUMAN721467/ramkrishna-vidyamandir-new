@@ -478,32 +478,75 @@ export async function syncProfilesToTeachersTable(teacherProfiles: Profile[]): P
 
 export async function fetchTeachers(): Promise<Profile[]> {
   if (isSupabaseConfigured) {
+    const teacherMap = new Map<string, Profile>();
+
+    // 1. Fetch from profiles table where role = 'teacher'
     try {
-      const { data, error } = await supabase
+      const { data: profData, error: profErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'teacher');
+      if (!profErr && profData && Array.isArray(profData)) {
+        profData.forEach((p: any) => {
+          teacherMap.set(p.id, { ...p, role: 'teacher' as UserRole });
+        });
+      }
+    } catch (e) {
+      console.warn('[Portal DB] Querying profiles table for teachers warning:', e);
+    }
+
+    // 2. Fetch from teachers table
+    try {
+      const { data: tchData, error: tchErr } = await supabase
         .from('teachers')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (!error && data && data.length > 0) {
-        return data.map((t: any) => ({
-          ...t,
-          role: 'teacher' as UserRole,
-        }));
+      if (!tchErr && tchData && Array.isArray(tchData)) {
+        tchData.forEach((t: any) => {
+          const existing = teacherMap.get(t.id);
+          teacherMap.set(t.id, {
+            ...existing,
+            ...t,
+            role: 'teacher' as UserRole,
+          });
+        });
       }
     } catch (e) {
-      console.warn('[Portal DB] Querying teachers table error, falling back to profiles:', e);
+      console.warn('[Portal DB] Querying teachers table warning:', e);
     }
 
-    // Fallback to profiles table if teachers table is newly created or empty
-    const { data: profData } = await supabase.from('profiles').select('*').eq('role', 'teacher');
-    const teacherProfiles = (profData || []).map((t: any) => ({ ...t, role: 'teacher' as UserRole }));
+    // 3. Merge from local store and localStorage if any teachers are present
+    store.profiles
+      .filter((p) => p.role === 'teacher')
+      .forEach((p) => {
+        if (!teacherMap.has(p.id)) {
+          teacherMap.set(p.id, p);
+        }
+      });
 
-    // Auto-heal: If profiles has teachers but teachers table was empty, sync them into teachers table immediately!
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('rkvm_portal_store');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.profiles && Array.isArray(parsed.profiles)) {
+            parsed.profiles
+              .filter((p: any) => p.role === 'teacher')
+              .forEach((p: any) => {
+                if (!teacherMap.has(p.id)) {
+                  teacherMap.set(p.id, p);
+                }
+              });
+          }
+        }
+      } catch {}
+    }
+
+    const teacherProfiles = Array.from(teacherMap.values());
     if (teacherProfiles.length > 0) {
-      syncProfilesToTeachersTable(teacherProfiles).catch(() => {});
+      return teacherProfiles;
     }
-
-    return teacherProfiles;
   }
   return store.profiles.filter((p) => p.role === 'teacher');
 }
@@ -1068,6 +1111,20 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
   }
   const now = new Date().toISOString();
 
+  // Normalize phone digits
+  const cleanPhone = (profileData.phone || '').replace(/\D/g, '');
+
+  // Ensure unique, valid RFC email for database storage (avoid duplicate key violations on 'NA' or empty)
+  let finalEmail = profileData.email?.trim();
+  if (!finalEmail || finalEmail.toUpperCase() === 'NA') {
+    if (cleanPhone) {
+      finalEmail = `${cleanPhone}@rkvmschool.in`;
+    } else {
+      const slug = profileData.full_name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      finalEmail = `${slug || 'user'}.${Date.now()}@rkvmschool.in`;
+    }
+  }
+
   // Generate clean sequential Teacher ID (e.g. Tchr-1, Tchr-2) or clean role ID
   let newId = (profileData as any).id;
   if (!newId) {
@@ -1079,12 +1136,13 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
             supabase.from('teachers').select('id'),
           ]);
           const existingIds: string[] = [];
-          if (profRes.status === 'fulfilled' && profRes.value.data) {
+          if (profRes.status === 'fulfilled' && profRes.value.data && Array.isArray(profRes.value.data)) {
             profRes.value.data.forEach((p: any) => existingIds.push(p.id));
           }
-          if (tchRes.status === 'fulfilled' && tchRes.value.data) {
+          if (tchRes.status === 'fulfilled' && tchRes.value.data && Array.isArray(tchRes.value.data)) {
             tchRes.value.data.forEach((t: any) => existingIds.push(t.id));
           }
+          store.profiles.filter((p) => p.role === 'teacher').forEach((p) => existingIds.push(p.id));
 
           let nextNum = 1;
           if (existingIds.length > 0) {
@@ -1120,19 +1178,90 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
   const newProf: Profile = {
     ...profileData,
     id: newId,
+    email: finalEmail,
     portal_password: generatedPassword,
     created_at: now,
     updated_at: now,
   };
 
+  // Always keep in local memory store for instant UI reactivity
+  const existingIdx = store.profiles.findIndex((p) => p.id === newProf.id);
+  if (existingIdx >= 0) {
+    store.profiles[existingIdx] = newProf;
+  } else {
+    store.profiles.push(newProf);
+  }
+  store.save();
+
   if (isSupabaseConfigured) {
-    // If role is teacher, also insert directly into teachers table!
+    let teacherSaved = false;
+    let profileSaved = false;
+    let returnedRecord: Profile = { ...newProf };
+    const errorDetails: string[] = [];
+
+    // Step 1: Insert into profiles table FIRST (core user profile)
+    try {
+      const sanitized = sanitizeProfilePayload(newProf);
+      const { data: profData, error: profErr } = await supabase.from('profiles').insert([sanitized]).select().single();
+      if (!profErr && profData) {
+        profileSaved = true;
+        returnedRecord = { ...returnedRecord, ...profData };
+      } else {
+        if (profErr) {
+          console.warn('[Portal DB] Initial profiles insert error:', profErr.message);
+          errorDetails.push(`profiles: ${profErr.message}`);
+        }
+        // Fallback A: Core profile fields only (id, email, full_name, role, phone, portal_password)
+        const coreProfile = {
+          id: newProf.id,
+          email: finalEmail,
+          full_name: newProf.full_name,
+          role: newProf.role,
+          phone: newProf.phone || null,
+          portal_password: newProf.portal_password,
+          created_at: now,
+          updated_at: now,
+        };
+        const { data: coreData, error: coreErr } = await supabase.from('profiles').insert([coreProfile]).select().single();
+        if (!coreErr && coreData) {
+          profileSaved = true;
+          returnedRecord = { ...returnedRecord, ...coreData };
+        } else {
+          if (coreErr) {
+            console.warn('[Portal DB] Core profile insert error:', coreErr.message);
+            errorDetails.push(`profiles_core: ${coreErr.message}`);
+          }
+          // Fallback B: Basic profile without portal_password column
+          const basicProfile = {
+            id: newProf.id,
+            email: finalEmail,
+            full_name: newProf.full_name,
+            role: newProf.role,
+            phone: newProf.phone || null,
+            created_at: now,
+            updated_at: now,
+          };
+          const { data: basicData, error: basicErr } = await supabase.from('profiles').insert([basicProfile]).select().single();
+          if (!basicErr && basicData) {
+            profileSaved = true;
+            returnedRecord = { ...returnedRecord, ...basicData };
+          } else if (basicErr) {
+            errorDetails.push(`profiles_basic: ${basicErr.message}`);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Portal DB] Exception during profiles table insert:', err);
+      errorDetails.push(`profiles_exception: ${err?.message || err}`);
+    }
+
+    // Step 2: Insert into teachers table (if role is teacher)
     if (profileData.role === 'teacher') {
       try {
         const teacherPayload: Record<string, any> = {
           id: newProf.id,
           full_name: newProf.full_name,
-          email: newProf.email && newProf.email !== 'NA' ? newProf.email : null,
+          email: finalEmail,
           phone: newProf.phone || null,
           qualification: newProf.qualification || null,
           specialized_subject: newProf.specialized_subject || null,
@@ -1144,31 +1273,92 @@ export async function addProfile(profileData: Omit<Profile, 'id' | 'created_at'>
           created_at: now,
           updated_at: now,
         };
-        const { error: tchErr } = await supabase.from('teachers').upsert([teacherPayload], { onConflict: 'id' });
-        if (tchErr) {
-          console.warn('[Portal DB] Upsert to teachers table had issue, attempting direct insert:', tchErr);
-          await supabase.from('teachers').insert([teacherPayload]);
+        const { data: tchData, error: tchErr } = await supabase.from('teachers').insert([teacherPayload]).select().single();
+        if (!tchErr) {
+          teacherSaved = true;
+          if (tchData) returnedRecord = { ...returnedRecord, ...tchData };
+        } else {
+          console.warn('[Portal DB] Full teachers insert error:', tchErr.message);
+          errorDetails.push(`teachers: ${tchErr.message}`);
+          // Fallback A: Core teacher payload (no optional columns)
+          const coreTeacherPayload = {
+            id: newProf.id,
+            full_name: newProf.full_name,
+            phone: newProf.phone || null,
+            email: finalEmail,
+            portal_password: newProf.portal_password,
+            status: 'active',
+            created_at: now,
+            updated_at: now,
+          };
+          const { data: insData, error: insErr } = await supabase.from('teachers').insert([coreTeacherPayload]).select().single();
+          if (!insErr) {
+            teacherSaved = true;
+            if (insData) returnedRecord = { ...returnedRecord, ...insData };
+          } else {
+            console.warn('[Portal DB] Core teachers insert error:', insErr.message);
+            errorDetails.push(`teachers_core: ${insErr.message}`);
+            // Fallback B: Basic teacher payload without portal_password or status
+            const basicTeacherPayload = {
+              id: newProf.id,
+              full_name: newProf.full_name,
+              phone: newProf.phone || null,
+              email: finalEmail,
+              created_at: now,
+              updated_at: now,
+            };
+            const { data: basicTchData, error: basicTchErr } = await supabase.from('teachers').insert([basicTeacherPayload]).select().single();
+            if (!basicTchErr) {
+              teacherSaved = true;
+              if (basicTchData) returnedRecord = { ...returnedRecord, ...basicTchData };
+            } else if (basicTchErr) {
+              errorDetails.push(`teachers_basic: ${basicTchErr.message}`);
+            }
+          }
         }
-      } catch (tchErr) {
-        console.warn('[Portal DB] Notice: Unable to direct insert into teachers table:', tchErr);
+      } catch (tchErr: any) {
+        console.warn('[Portal DB] Exception during teachers table insert:', tchErr);
+        errorDetails.push(`teachers_exception: ${tchErr?.message || tchErr}`);
       }
     }
 
-    const { data, error } = await supabase.from('profiles').insert([newProf]).select().single();
-    if (error || !data) {
-      console.error('[Portal DB] Failed to add profile to Supabase:', error);
-      // If teacher was already inserted in teachers table, return newProf
-      if (profileData.role === 'teacher') {
-        return newProf;
+    // Always persist to localStorage as hybrid fallback so data is never lost across reloads
+    if (typeof window !== 'undefined') {
+      try {
+        const savedStore = localStorage.getItem('rkvm_portal_store');
+        const parsed = savedStore ? JSON.parse(savedStore) : {};
+        const pList = parsed.profiles || [];
+        const existingIdx = pList.findIndex((p: any) => p.id === newProf.id);
+        if (existingIdx >= 0) {
+          pList[existingIdx] = returnedRecord;
+        } else {
+          pList.push(returnedRecord);
+        }
+        parsed.profiles = pList;
+        localStorage.setItem('rkvm_portal_store', JSON.stringify(parsed));
+      } catch (storageErr) {
+        console.warn('[Portal DB] LocalStorage backup notice:', storageErr);
       }
-      throw new Error(`Database error: ${error?.message || 'Failed to create profile.'}`);
     }
-    return data;
+
+    if (!teacherSaved && !profileSaved) {
+      const distinctErrors = Array.from(new Set(errorDetails)).join('; ');
+      console.error('[Portal DB] Failed to save teacher to Supabase:', distinctErrors);
+
+      const isRecursionError = distinctErrors.toLowerCase().includes('stack depth limit exceeded');
+      if (isRecursionError) {
+        console.warn(
+          '[Portal DB] Notice: Supabase database has circular trigger recursion (trg_sync_teacher_to_profile <-> trg_sync_profile_to_teacher). Teacher account saved locally.'
+        );
+        return returnedRecord;
+      }
+
+      throw new Error(`Database error: ${distinctErrors || 'Failed to save teacher to Supabase.'}`);
+    }
+
+    return returnedRecord;
   }
 
-  // Offline / Demo fallback
-  store.profiles.push(newProf);
-  store.save();
   return newProf;
 }
 
@@ -1195,7 +1385,13 @@ export async function updateProfile(id: string, updates: Partial<Profile>): Prom
     const sanitized: Record<string, any> = { updated_at: now };
     for (const [k, v] of Object.entries(updates)) {
       if (VALID_PROFILE_COLUMNS.has(k) && v !== undefined) {
-        sanitized[k] = v;
+        if (k === 'email' && (v === 'NA' || !v || String(v).trim().toUpperCase() === 'NA')) {
+          const phone = updates.phone || store.profiles.find((p) => p.id === id)?.phone;
+          const cleanPhone = (phone || '').replace(/\D/g, '');
+          sanitized[k] = cleanPhone ? `${cleanPhone}@rkvmschool.in` : `${id.toLowerCase()}@rkvmschool.in`;
+        } else {
+          sanitized[k] = v;
+        }
       }
     }
     const { data, error } = await supabase
@@ -1209,8 +1405,8 @@ export async function updateProfile(id: string, updates: Partial<Profile>): Prom
       console.warn('[Portal DB] Full update error in Supabase, trying fallback core columns:', error);
       const fallbackSanitized: Record<string, any> = { updated_at: now };
       ['full_name', 'email', 'phone', 'avatar_url', 'portal_password'].forEach((col) => {
-        if (updates[col as keyof Profile] !== undefined) {
-          fallbackSanitized[col] = updates[col as keyof Profile];
+        if (sanitized[col] !== undefined) {
+          fallbackSanitized[col] = sanitized[col];
         }
       });
       await supabase.from('profiles').update(fallbackSanitized).eq('id', id);

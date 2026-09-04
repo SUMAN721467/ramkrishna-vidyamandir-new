@@ -364,6 +364,11 @@ EXCEPTION WHEN others THEN null; END $$;
 CREATE OR REPLACE FUNCTION public.sync_teacher_to_profile()
 RETURNS TRIGGER AS $$
 BEGIN
+    -- Prevent infinite trigger loop with sync_profile_to_teacher
+    IF pg_trigger_depth() > 1 THEN
+        RETURN NEW;
+    END IF;
+
     INSERT INTO public.profiles (
         id, full_name, email, phone, role, qualification,
         specialized_subject, address, aadhar_number, avatar_url, portal_password, created_at, updated_at
@@ -424,6 +429,11 @@ EXECUTE FUNCTION public.sync_delete_teacher_from_profile();
 CREATE OR REPLACE FUNCTION public.sync_profile_to_teacher()
 RETURNS TRIGGER AS $$
 BEGIN
+    -- Prevent infinite trigger loop with sync_teacher_to_profile
+    IF pg_trigger_depth() > 1 THEN
+        RETURN NEW;
+    END IF;
+
     IF NEW.role = 'teacher' THEN
         INSERT INTO public.teachers (
             id, full_name, email, phone, qualification,

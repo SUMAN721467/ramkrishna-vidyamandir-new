@@ -344,7 +344,11 @@ function AdminDashboardPage() {
       setClasses(cls);
       setSections(sec);
       setStudents(st);
-      setTeachers(tchs.length > 0 ? tchs : profs.filter((p) => p.role === 'teacher'));
+      // Combine all unique teachers from both queries seamlessly
+      const teacherMap = new Map<string, Profile>();
+      profs.filter((p) => p.role === 'teacher').forEach((t) => teacherMap.set(t.id, t));
+      tchs.forEach((t) => teacherMap.set(t.id, { ...teacherMap.get(t.id), ...t }));
+      setTeachers(Array.from(teacherMap.values()));
       setParents(profs.filter((p) => p.role === 'parent'));
       setAttendanceRecords(att);
       setNotices(nots);
@@ -817,8 +821,10 @@ function AdminDashboardPage() {
         return;
       }
 
-      // Email is optional - store 'NA' if no email is entered
-      const teacherEmail = teacherForm.email?.trim() || 'NA';
+      // Email is optional - create synthetic unique email if not provided
+      const teacherEmail = teacherForm.email?.trim() && teacherForm.email.trim().toUpperCase() !== 'NA'
+        ? teacherForm.email.trim()
+        : `${cleanPhone}@rkvmschool.in`;
       const defaultPassword = generateTeacherDefaultPassword(trimmedName);
 
       const newProf = await addProfile({
@@ -827,7 +833,11 @@ function AdminDashboardPage() {
         phone: cleanPhone,
         role: 'teacher',
         portal_password: defaultPassword,
+        qualification: teacherForm.qualification?.trim() || undefined,
       });
+
+      // Optimistically add to teachers state immediately so UI updates right away
+      setTeachers((prev) => [newProf, ...prev.filter((t) => t.id !== newProf.id)]);
 
       toast.success(`Teacher account created for ${trimmedName}! Default Password: ${defaultPassword}`);
       setShowTeacherModal(false);
@@ -838,7 +848,7 @@ function AdminDashboardPage() {
         employee_id: '',
         qualification: '',
       });
-      loadData();
+      await loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to create teacher account');
     }
