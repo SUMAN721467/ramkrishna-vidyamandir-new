@@ -168,6 +168,9 @@ function AdminDashboardPage() {
     subject: string;
     teacher_name: string;
     teacher_id?: string;
+    is_break: boolean;
+    break_type: string;
+    time_slot?: string;
   }>({
     class_id: '',
     day_of_week: 'Monday',
@@ -175,6 +178,9 @@ function AdminDashboardPage() {
     subject: '',
     teacher_name: '',
     teacher_id: '',
+    is_break: false,
+    break_type: 'tiffin',
+    time_slot: '',
   });
 
   // Class-wise filter in Student Directory & Exams
@@ -455,6 +461,9 @@ function AdminDashboardPage() {
       subject: subjects[0]?.name || '',
       teacher_name: initialTeacher?.full_name || '',
       teacher_id: initialTeacher?.id || '',
+      is_break: false,
+      break_type: 'tiffin',
+      time_slot: '',
     });
     setShowTimetableModal(true);
   };
@@ -467,54 +476,70 @@ function AdminDashboardPage() {
     setTimetableForm({
       class_id: entry.class_id,
       day_of_week: entry.day_of_week,
-      period_number: entry.period_number,
-      subject: entry.subject,
+      period_number: Number(entry.period_number) || 1,
+      subject: entry.subject || '',
       teacher_name: entry.teacher_name || 'NA',
       teacher_id: entry.teacher_id || matchedTeacher?.id || '',
+      is_break: Boolean(entry.is_break),
+      break_type: entry.break_type || 'tiffin',
+      time_slot: entry.time_slot || '',
     });
     setShowTimetableModal(true);
   };
 
   const handleSaveTimetable = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!timetableForm.class_id || !timetableForm.subject || !timetableForm.teacher_name || !timetableForm.period_number) {
+    if (!timetableForm.class_id || !timetableForm.subject || !timetableForm.period_number) {
       toast.error('Please fill in all required routine fields.');
+      return;
+    }
+
+    if (!timetableForm.is_break && !timetableForm.teacher_name) {
+      toast.error('Please select an assigned teacher for the teaching period.');
       return;
     }
 
     setSavingTimetable(true);
     try {
+      const isBreak = Boolean(timetableForm.is_break);
       const matchedTeacher = teachers.find(
         (t) => t.id === timetableForm.teacher_id || t.full_name === timetableForm.teacher_name
       );
-      const resolvedTeacherId = matchedTeacher?.id || timetableForm.teacher_id || undefined;
+      const resolvedTeacherId = isBreak ? undefined : (matchedTeacher?.id || timetableForm.teacher_id || undefined);
+      const resolvedTeacherName = isBreak ? 'NA' : (timetableForm.teacher_name?.trim() || 'NA');
 
       if (editingTimetableEntry) {
         await updateClassTimetableEntry(editingTimetableEntry.id, {
           class_id: timetableForm.class_id,
           day_of_week: timetableForm.day_of_week,
           period_number: Number(timetableForm.period_number) || 1,
-          start_time: '',
-          end_time: '',
+          start_time: isBreak ? '' : '10:30 AM',
+          end_time: isBreak ? '' : '11:15 AM',
+          time_slot: timetableForm.time_slot?.trim() || undefined,
           subject: timetableForm.subject.trim(),
-          teacher_name: timetableForm.teacher_name.trim(),
+          teacher_name: resolvedTeacherName,
           teacher_id: resolvedTeacherId,
+          is_break: isBreak,
+          break_type: isBreak ? (timetableForm.break_type || 'tiffin') : undefined,
           room_number: '',
         });
-        toast.success('Timetable period updated successfully!');
+        toast.success(isBreak ? 'Tiffin / Break slot updated successfully!' : 'Timetable period updated successfully!');
       } else {
         await addClassTimetableEntry({
           class_id: timetableForm.class_id,
           day_of_week: timetableForm.day_of_week,
           period_number: Number(timetableForm.period_number) || 1,
-          start_time: '',
-          end_time: '',
+          start_time: isBreak ? '' : '10:30 AM',
+          end_time: isBreak ? '' : '11:15 AM',
+          time_slot: timetableForm.time_slot?.trim() || undefined,
           subject: timetableForm.subject.trim(),
-          teacher_name: timetableForm.teacher_name.trim(),
+          teacher_name: resolvedTeacherName,
           teacher_id: resolvedTeacherId,
+          is_break: isBreak,
+          break_type: isBreak ? (timetableForm.break_type || 'tiffin') : undefined,
           room_number: '',
         });
-        toast.success('Period slot added to timetable!');
+        toast.success(isBreak ? 'Tiffin / Break slot added to routine!' : 'Period slot added to timetable!');
       }
       setShowTimetableModal(false);
       loadData();
@@ -525,8 +550,11 @@ function AdminDashboardPage() {
     }
   };
 
-  const handleDeleteTimetable = (id: string, subject: string, day: string, period: number) => {
-    setDeleteTimetableModal({ id, description: `Period ${period} (${subject}) on ${day}` });
+  const handleDeleteTimetable = (id: string, subject: string, day: string, period: number, isBreak?: boolean) => {
+    setDeleteTimetableModal({
+      id,
+      description: isBreak ? `Tiffin Break on ${day}` : `Period ${period} (${subject}) on ${day}`,
+    });
   };
 
   const confirmDeleteTimetable = async () => {
@@ -2931,10 +2959,11 @@ function AdminDashboardPage() {
                     className="rounded-xl border border-input bg-background px-3.5 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   >
                     {classes.map((c) => {
-                      const count = classTimetables.filter((t) => t.class_id === c.id).length;
+                      const teachingCount = classTimetables.filter((t) => t.class_id === c.id && !t.is_break).length;
+                      const breakCount = classTimetables.filter((t) => t.class_id === c.id && Boolean(t.is_break)).length;
                       return (
                         <option key={c.id} value={c.id}>
-                          {c.name} ({count} {count === 1 ? 'Period' : 'Periods'})
+                          {c.name} ({teachingCount} {teachingCount === 1 ? 'Period' : 'Periods'}{breakCount > 0 ? `, ${breakCount} Break` : ''})
                         </option>
                       );
                     })}
@@ -2944,8 +2973,11 @@ function AdminDashboardPage() {
                 {/* Day Navigation Pills */}
                 <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                   {DAYS_OF_WEEK.map((day) => {
-                    const count = classTimetables.filter(
-                      (t) => t.class_id === selectedRoutineClass && t.day_of_week === day
+                    const teachingCount = classTimetables.filter(
+                      (t) => t.class_id === selectedRoutineClass && t.day_of_week === day && !t.is_break
+                    ).length;
+                    const breakCount = classTimetables.filter(
+                      (t) => t.class_id === selectedRoutineClass && t.day_of_week === day && Boolean(t.is_break)
                     ).length;
                     const active = selectedRoutineDay === day;
 
@@ -2966,8 +2998,18 @@ function AdminDashboardPage() {
                             active ? 'bg-primary-dark text-white' : 'bg-muted text-muted-foreground'
                           }`}
                         >
-                          {count}
+                          {teachingCount}
                         </span>
+                        {breakCount > 0 && (
+                          <span
+                            className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                              active ? 'bg-amber-400 text-amber-950' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            }`}
+                            title={`${breakCount} Recess / Tiffin Break`}
+                          >
+                            🥪 {breakCount}
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -2977,12 +3019,12 @@ function AdminDashboardPage() {
 
             {/* Timetable Period Grid for Selected Class & Day */}
             {(() => {
-              const currentPeriods = classTimetables.filter(
+              const currentEntries = classTimetables.filter(
                 (t) => t.class_id === selectedRoutineClass && t.day_of_week === selectedRoutineDay
               );
               const selectedCls = classes.find((c) => c.id === selectedRoutineClass);
 
-              if (currentPeriods.length === 0) {
+              if (currentEntries.length === 0) {
                 return (
                   <div className="rounded-3xl border border-border bg-card p-12 text-center shadow-soft space-y-4">
                     <div className="size-16 rounded-2xl bg-primary/10 text-primary grid place-items-center mx-auto">
@@ -2990,10 +3032,10 @@ function AdminDashboardPage() {
                     </div>
                     <div className="max-w-md mx-auto space-y-2">
                       <h4 className="text-base font-bold text-foreground">
-                        No Periods Scheduled on {selectedRoutineDay}
+                        No Routine Scheduled on {selectedRoutineDay}
                       </h4>
                       <p className="text-xs text-muted-foreground leading-relaxed">
-                        There are no routine periods scheduled for {selectedCls?.name || 'this class'} on {selectedRoutineDay}. Click below to add period slots.
+                        There are no routine periods or break slots scheduled for {selectedCls?.name || 'this class'} on {selectedRoutineDay}. Click below to add period or tiffin slots.
                       </p>
                       <div className="pt-2">
                         <button
@@ -3002,7 +3044,7 @@ function AdminDashboardPage() {
                           className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-soft hover:bg-primary-dark"
                         >
                           <Plus className="size-4" />
-                          Add Period Slot for {selectedRoutineDay}
+                          Add Period or Tiffin Slot for {selectedRoutineDay}
                         </button>
                       </div>
                     </div>
@@ -3012,62 +3054,124 @@ function AdminDashboardPage() {
 
               return (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {currentPeriods.map((period) => (
-                    <div
-                      key={period.id}
-                      className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
-                    >
-                      {/* Top bar: Period Number */}
-                      <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
-                            <Clock className="size-3.5" />
-                            Period {period.period_number}
-                          </span>
-                          {Number(period.period_number) === 1 && (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 text-[10px] font-extrabold border border-emerald-300/60 dark:border-emerald-800">
-                              <CheckCircle2 className="size-3" />
-                              Attendance Period
+                  {currentEntries.map((period) => {
+                    const isBreak = Boolean(period.is_break);
+
+                    if (isBreak) {
+                      return (
+                        <div
+                          key={period.id}
+                          className="rounded-3xl border border-amber-300/80 dark:border-amber-700/60 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
+                        >
+                          {/* Top bar: Break Badge & Non-Period Indicator */}
+                          <div className="flex items-center justify-between gap-2 border-b border-amber-300/50 dark:border-amber-800/50 pb-3">
+                            <div className="flex items-center gap-2">
+                              <span className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/15 text-amber-900 dark:text-amber-200 border border-amber-300/60 dark:border-amber-700/60 px-3 py-1 text-xs font-black uppercase tracking-wider">
+                                🥪 {period.break_type === 'lunch' ? 'Lunch Break' : period.break_type === 'recess' ? 'Recess Interval' : 'Tiffin Break'}
+                              </span>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-muted text-muted-foreground px-2.5 py-0.5 text-[10px] font-bold border border-border">
+                                Non-Period Slot
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Middle: Break Title */}
+                          <div className="space-y-1">
+                            <h4 className="text-base font-extrabold text-foreground tracking-tight flex items-center gap-2">
+                              <span>{period.subject || 'Tiffin Break (টিফিন বিরতি)'}</span>
+                            </h4>
+                            <p className="text-xs text-amber-800/80 dark:text-amber-300/80 font-medium">
+                              {period.time_slot ? `Recess Timing: ${period.time_slot}` : `Scheduled after Period ${Math.floor(period.period_number)}`}
+                            </p>
+                          </div>
+
+                          {/* Bottom bar: Placement & Actions */}
+                          <div className="pt-3 border-t border-amber-300/50 dark:border-amber-800/50 flex items-center justify-between text-xs">
+                            <span className="font-semibold text-muted-foreground flex items-center gap-1.5">
+                              <Clock className="size-3.5 text-amber-600" />
+                              {period.period_number ? `After Period ${Math.floor(period.period_number)}` : 'Recess Interval'}
                             </span>
-                          )}
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditTimetableModal(period)}
+                                className="size-7 rounded-lg border border-border bg-card grid place-items-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                title="Edit Break"
+                              >
+                                <Edit2 className="size-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTimetable(period.id, period.subject || 'Tiffin Break', period.day_of_week, period.period_number, true)}
+                                className="size-7 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
+                                title="Delete Break"
+                              >
+                                <Trash2 className="size-3" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={period.id}
+                        className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
+                      >
+                        {/* Top bar: Period Number */}
+                        <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
+                              <Clock className="size-3.5" />
+                              Period {period.period_number}
+                            </span>
+                            {Number(period.period_number) === 1 && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 text-[10px] font-extrabold border border-emerald-300/60 dark:border-emerald-800">
+                                <CheckCircle2 className="size-3" />
+                                Attendance Period
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Middle: Subject */}
+                        <div className="space-y-1">
+                          <h4 className="text-base font-extrabold text-foreground tracking-tight">
+                            {period.subject}
+                          </h4>
+                        </div>
+
+                        {/* Bottom bar: Teacher & Admin Actions */}
+                        <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
+                          <span className="font-bold text-foreground flex items-center gap-1.5">
+                            <User className="size-3.5 text-muted-foreground" />
+                            {period.teacher_name}
+                          </span>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEditTimetableModal(period)}
+                              className="size-7 rounded-lg border border-border bg-card grid place-items-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                              title="Edit Period"
+                            >
+                              <Edit2 className="size-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTimetable(period.id, period.subject, period.day_of_week, period.period_number, false)}
+                              className="size-7 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
+                              title="Delete Period"
+                            >
+                              <Trash2 className="size-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-
-                      {/* Middle: Subject */}
-                      <div className="space-y-1">
-                        <h4 className="text-base font-extrabold text-foreground tracking-tight">
-                          {period.subject}
-                        </h4>
-                      </div>
-
-                      {/* Bottom bar: Teacher & Admin Actions */}
-                      <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
-                        <span className="font-bold text-foreground flex items-center gap-1.5">
-                          <User className="size-3.5 text-muted-foreground" />
-                          {period.teacher_name}
-                        </span>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => openEditTimetableModal(period)}
-                            className="size-7 rounded-lg border border-border bg-card grid place-items-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                            title="Edit Period"
-                          >
-                            <Edit2 className="size-3" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTimetable(period.id, period.subject, period.day_of_week, period.period_number)}
-                            className="size-7 rounded-lg border border-rose-200 bg-rose-50 dark:bg-rose-950/40 grid place-items-center text-rose-600 hover:bg-rose-100 transition-colors"
-                            title="Delete Period"
-                          >
-                            <Trash2 className="size-3" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               );
             })()}
@@ -4459,7 +4563,55 @@ function AdminDashboardPage() {
             </div>
 
             <form onSubmit={handleSaveTimetable} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* SLOT TYPE SELECTOR: TEACHING PERIOD vs TIFFIN / BREAK */}
+              <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-muted/50 border border-border">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTimetableForm((prev) => ({
+                      ...prev,
+                      is_break: false,
+                      period_number: prev.period_number >= 1 && prev.period_number <= 7 && Number.isInteger(prev.period_number) ? prev.period_number : 1,
+                      subject: prev.is_break ? (subjects[0]?.name || 'Bengali (বাংলা)') : prev.subject,
+                    }))
+                  }
+                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-extrabold transition-all ${
+                    !timetableForm.is_break
+                      ? 'bg-primary text-primary-foreground shadow-soft'
+                      : 'text-muted-foreground hover:bg-card hover:text-foreground'
+                  }`}
+                >
+                  <BookOpen className="size-4" />
+                  Teaching Period (1–7)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTimetableForm((prev) => ({
+                      ...prev,
+                      is_break: true,
+                      period_number: prev.is_break ? prev.period_number : 3.5, // Default after Period 3
+                      subject: prev.is_break ? prev.subject : 'Tiffin Break (টিফিন বিরতি)',
+                      teacher_name: 'NA',
+                      teacher_id: '',
+                      break_type: prev.break_type || 'tiffin',
+                      time_slot: prev.time_slot || '1:00 PM - 1:30 PM',
+                    }))
+                  }
+                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-extrabold transition-all ${
+                    timetableForm.is_break
+                      ? 'bg-amber-500 text-white shadow-soft'
+                      : 'text-muted-foreground hover:bg-card hover:text-foreground'
+                  }`}
+                >
+                  <span className="text-sm">🥪</span>
+                  Tiffin / Recess Break
+                </button>
+              </div>
+
+              {/* COMMON FIELDS: CLASS & DAY */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Class */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
@@ -4481,7 +4633,7 @@ function AdminDashboardPage() {
                 {/* Day of Week */}
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Day *
+                    Day of Week *
                   </label>
                   <select
                     value={timetableForm.day_of_week}
@@ -4495,112 +4647,210 @@ function AdminDashboardPage() {
                     ))}
                   </select>
                 </div>
-
-                {/* Period Dropdown (1 to 7) */}
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Period (Max 7) *
-                  </label>
-                  <select
-                    value={timetableForm.period_number}
-                    onChange={(e) => setTimetableForm({ ...timetableForm, period_number: Number(e.target.value) || 1 })}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7].map((num) => (
-                      <option key={num} value={num}>
-                        Period {num} {num === 1 ? '— Attendance Period' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
-              {Number(timetableForm.period_number) === 1 && (
-                <div className="rounded-2xl border border-emerald-300/70 bg-emerald-50 dark:bg-emerald-950/40 p-3 text-xs text-emerald-900 dark:text-emerald-200 flex items-start gap-2.5">
-                  <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                  <p className="leading-snug">
-                    <span className="font-extrabold">Attendance Responsibility: </span>
-                    In accordance with school policy, the teacher assigned to <strong>Period 1</strong> is designated to mark and submit the official daily attendance register for this class.
-                  </p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Subject Selection (Dynamic + Quick Add) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase">
-                      Subject Name *
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowTimetableModal(false);
-                        setActiveTab('subjects');
-                        openCreateSubjectModal();
-                      }}
-                      className="text-[11px] text-primary hover:underline font-semibold"
-                    >
-                      + Add New Subject
-                    </button>
+              {/* ========================================================= */}
+              {/* MODE A: TIFFIN / RECESS BREAK CONFIGURATION               */}
+              {/* ========================================================= */}
+              {timetableForm.is_break ? (
+                <div className="rounded-2xl border border-amber-300/80 dark:border-amber-700/60 bg-amber-50/50 dark:bg-amber-950/30 p-4 space-y-4">
+                  <div className="flex items-start gap-2.5">
+                    <span className="text-xl">🥪</span>
+                    <div className="space-y-0.5">
+                      <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                        School Recess / Tiffin Interval
+                      </h4>
+                      <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 leading-snug">
+                        Tiffin Break is an official non-period recess interval. It does <strong>not</strong> count towards teaching periods and does <strong>not</strong> assign attendance responsibilities.
+                      </p>
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    required
-                    value={timetableForm.subject}
-                    onChange={(e) => setTimetableForm({ ...timetableForm, subject: e.target.value })}
-                    placeholder="e.g. Mathematics, Tiffin Break"
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                  />
-                  {subjects.length > 0 && (
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {/* Placement Position */}
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Break Position / Placement *
+                      </label>
+                      <select
+                        value={timetableForm.period_number}
+                        onChange={(e) => setTimetableForm({ ...timetableForm, period_number: Number(e.target.value) })}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-amber-500 outline-none"
+                      >
+                        <option value={1.5}>After Period 1 (Between Period 1 & 2)</option>
+                        <option value={2.5}>After Period 2 (Between Period 2 & 3)</option>
+                        <option value={3.5}>After Period 3 (Mid-Day Tiffin — Recommended)</option>
+                        <option value={4.5}>After Period 4 (Between Period 4 & 5)</option>
+                        <option value={5.5}>After Period 5 (Between Period 5 & 6)</option>
+                        <option value={6.5}>After Period 6 (Between Period 6 & 7)</option>
+                        <option value={0.5}>Before Period 1 (Morning Assembly / Interval)</option>
+                      </select>
+                    </div>
+
+                    {/* Break Time Slot */}
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Recess Time Slot (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={timetableForm.time_slot || ''}
+                        onChange={(e) => setTimetableForm({ ...timetableForm, time_slot: e.target.value })}
+                        placeholder="e.g. 1:00 PM - 1:30 PM"
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-amber-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick Break Titles */}
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1.5">
+                      Break Title / Label *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={timetableForm.subject}
+                      onChange={(e) => setTimetableForm({ ...timetableForm, subject: e.target.value })}
+                      placeholder="e.g. Tiffin Break (টিফিন বিরতি)"
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-amber-500 outline-none"
+                    />
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {[
+                        { label: '🥪 Tiffin Break (টিফিন বিরতি)', val: 'Tiffin Break (টিফিন বিরতি)', type: 'tiffin' },
+                        { label: '🍱 Lunch Break', val: 'Lunch Break', type: 'lunch' },
+                        { label: '☕ Recess / Interval', val: 'Recess Interval', type: 'recess' },
+                        { label: '🥛 Snack / Milk Break', val: 'Snack Break', type: 'short_break' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.val}
+                          type="button"
+                          onClick={() =>
+                            setTimetableForm({
+                              ...timetableForm,
+                              subject: preset.val,
+                              break_type: preset.type,
+                            })
+                          }
+                          className="text-[11px] font-semibold rounded-lg border border-border bg-card px-2.5 py-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ========================================================= */
+                /* MODE B: REGULAR TEACHING PERIOD CONFIGURATION              */
+                /* ========================================================= */
+                <div className="space-y-4">
+                  {/* Period Dropdown (1 to 7) */}
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                      Period Number (1 to 7) *
+                    </label>
                     <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          setTimetableForm({ ...timetableForm, subject: e.target.value });
-                        }
-                      }}
-                      value={subjects.some(s => s.name === timetableForm.subject) ? timetableForm.subject : ''}
-                      className="mt-1.5 w-full rounded-xl border border-border bg-muted/40 px-3 py-1.5 text-xs text-foreground outline-none font-medium"
+                      value={timetableForm.period_number}
+                      onChange={(e) => setTimetableForm({ ...timetableForm, period_number: Number(e.target.value) || 1 })}
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-primary outline-none"
                     >
-                      <option value="">-- Or Select from Dynamic Subjects ({subjects.length}) --</option>
-                      {subjects
-                        .filter((s) => s.class_id === 'all' || s.class_id === timetableForm.class_id)
-                        .map((s) => (
-                          <option key={s.id} value={s.name}>
-                            {s.name} {s.code ? `(${s.code})` : ''}
+                      {[1, 2, 3, 4, 5, 6, 7].map((num) => (
+                        <option key={num} value={num}>
+                          Period {num} {num === 1 ? '— Attendance Period' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {Number(timetableForm.period_number) === 1 && (
+                    <div className="rounded-2xl border border-emerald-300/70 bg-emerald-50 dark:bg-emerald-950/40 p-3 text-xs text-emerald-900 dark:text-emerald-200 flex items-start gap-2.5">
+                      <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      <p className="leading-snug">
+                        <span className="font-extrabold">Attendance Responsibility: </span>
+                        In accordance with school policy, the teacher assigned to <strong>Period 1</strong> is designated to mark and submit the official daily attendance register for this class.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Subject Selection (Dynamic + Quick Add) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-muted-foreground uppercase">
+                          Subject Name *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowTimetableModal(false);
+                            setActiveTab('subjects');
+                            openCreateSubjectModal();
+                          }}
+                          className="text-[11px] text-primary hover:underline font-semibold"
+                        >
+                          + Add New Subject
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        required={!timetableForm.is_break}
+                        value={timetableForm.subject}
+                        onChange={(e) => setTimetableForm({ ...timetableForm, subject: e.target.value })}
+                        placeholder="e.g. Mathematics, Bengali"
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                      />
+                      {subjects.length > 0 && (
+                        <select
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setTimetableForm({ ...timetableForm, subject: e.target.value });
+                            }
+                          }}
+                          value={subjects.some((s) => s.name === timetableForm.subject) ? timetableForm.subject : ''}
+                          className="mt-1.5 w-full rounded-xl border border-border bg-muted/40 px-3 py-1.5 text-xs text-foreground outline-none font-medium"
+                        >
+                          <option value="">-- Or Select from Dynamic Subjects ({subjects.length}) --</option>
+                          {subjects
+                            .filter((s) => s.class_id === 'all' || s.class_id === timetableForm.class_id)
+                            .map((s) => (
+                              <option key={s.id} value={s.name}>
+                                {s.name} {s.code ? `(${s.code})` : ''}
+                              </option>
+                            ))}
+                        </select>
+                      )}
+                    </div>
+
+                    {/* Assigned Teacher (Dropdown with NA as 1st option) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
+                        Assigned Teacher *
+                      </label>
+                      <select
+                        value={timetableForm.teacher_name || 'NA'}
+                        onChange={(e) => {
+                          const selName = e.target.value;
+                          const found = teachers.find((t) => t.full_name === selName);
+                          setTimetableForm({
+                            ...timetableForm,
+                            teacher_name: selName,
+                            teacher_id: found ? found.id : '',
+                          });
+                        }}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
+                      >
+                        <option value="NA">NA (Not Assigned)</option>
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.full_name}>
+                            {t.full_name}
                           </option>
                         ))}
-                    </select>
-                  )}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-
-                {/* Assigned Teacher (Dropdown with NA as 1st option) */}
-                <div>
-                  <label className="block text-xs font-semibold text-muted-foreground uppercase mb-1">
-                    Assigned Teacher *
-                  </label>
-                  <select
-                    value={timetableForm.teacher_name || 'NA'}
-                    onChange={(e) => {
-                      const selName = e.target.value;
-                      const found = teachers.find((t) => t.full_name === selName);
-                      setTimetableForm({
-                        ...timetableForm,
-                        teacher_name: selName,
-                        teacher_id: found ? found.id : '',
-                      });
-                    }}
-                    className="w-full rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus:ring-2 focus:ring-primary outline-none"
-                  >
-                    <option value="NA">NA (Not Assigned)</option>
-                    {teachers.map((t) => (
-                      <option key={t.id} value={t.full_name}>
-                        {t.full_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              )}
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
                 <button

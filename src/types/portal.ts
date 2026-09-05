@@ -185,7 +185,9 @@ export interface ClassTimetableEntry {
   id: string;
   class_id: string;
   day_of_week: DayOfWeek;
-  period_number: number; // 1 to 7
+  period_number: number; // 1 to 7 for teaching periods, or fractional for break placement (e.g. 3.5 = after period 3)
+  is_break?: boolean; // True for Tiffin Break, Recess, etc. (NOT a period)
+  break_type?: 'tiffin' | 'lunch' | 'recess' | 'short_break' | 'break' | string;
   start_time?: string;
   end_time?: string;
   time_slot?: string;

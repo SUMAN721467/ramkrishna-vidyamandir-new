@@ -370,14 +370,14 @@ function TeacherDashboardPage() {
   const todayPeriod1Classes = useMemo(() => {
     if (todayIndiaDay === 'Sunday') return [];
     return weeklyRoutine.filter(
-      (e) => e.day_of_week === todayIndiaDay && Number(e.period_number) === 1
+      (e) => e.day_of_week === todayIndiaDay && Number(e.period_number) === 1 && !e.is_break
     );
   }, [weeklyRoutine, todayIndiaDay]);
 
   // Routine for the selected day in Section 2
   const selectedDayRoutine = useMemo(() => {
     return weeklyRoutine
-      .filter((e) => e.day_of_week === selectedRoutineDay)
+      .filter((e) => e.day_of_week === selectedRoutineDay && !e.is_break)
       .sort((a, b) => (Number(a.period_number) || 0) - (Number(b.period_number) || 0));
   }, [weeklyRoutine, selectedRoutineDay]);
 
@@ -1017,7 +1017,7 @@ function TeacherDashboardPage() {
                   {(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as DayOfWeek[]).map((day) => {
                     const active = selectedRoutineDay === day;
                     const isToday = todayIndiaDay === day;
-                    const count = weeklyRoutine.filter((r) => r.day_of_week === day).length;
+                    const count = weeklyRoutine.filter((r) => r.day_of_week === day && !r.is_break).length;
 
                     return (
                       <button

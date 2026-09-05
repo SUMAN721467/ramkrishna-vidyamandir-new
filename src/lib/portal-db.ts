@@ -666,7 +666,7 @@ export function matchTeacher(
   targetId?: string,
   targetName?: string
 ): boolean {
-  if (!entry) return false;
+  if (!entry || entry.is_break) return false;
   const eId = entry.teacher_id?.trim().toLowerCase();
   const eName = entry.teacher_name?.trim().toLowerCase();
   const tId = targetId?.trim().toLowerCase();
@@ -704,7 +704,7 @@ export async function fetchTeacherTodayRoutine(
 
   const allEntries = await fetchClassTimetables(undefined, currentDay);
   return allEntries
-    .filter((e) => e.day_of_week === currentDay && matchTeacher(e, teacherIdentifier.id, teacherIdentifier.name))
+    .filter((e) => e.day_of_week === currentDay && !e.is_break && matchTeacher(e, teacherIdentifier.id, teacherIdentifier.name))
     .sort((a, b) => (Number(a.period_number) || 0) - (Number(b.period_number) || 0));
 }
 
@@ -713,7 +713,7 @@ export async function fetchTeacherWeeklyRoutine(
 ): Promise<ClassTimetableEntry[]> {
   const allEntries = await fetchClassTimetables();
   return allEntries
-    .filter((e) => matchTeacher(e, teacherIdentifier.id, teacherIdentifier.name))
+    .filter((e) => !e.is_break && matchTeacher(e, teacherIdentifier.id, teacherIdentifier.name))
     .sort((a, b) => {
       const dA = DAY_ORDER[a.day_of_week] || 0;
       const dB = DAY_ORDER[b.day_of_week] || 0;
@@ -727,7 +727,7 @@ export async function fetchTeacherAuthorizedPeriod1Classes(
   dayOfWeek?: DayOfWeek | string
 ): Promise<ClassTimetableEntry[]> {
   const routine = await fetchTeacherTodayRoutine(teacherIdentifier, dayOfWeek);
-  return routine.filter((e) => Number(e.period_number) === 1);
+  return routine.filter((e) => Number(e.period_number) === 1 && !e.is_break);
 }
 
 export async function fetchAttendance(filters: {
@@ -2101,6 +2101,8 @@ const VALID_CLASS_TIMETABLE_COLUMNS = new Set([
   'class_id',
   'day_of_week',
   'period_number',
+  'is_break',
+  'break_type',
   'start_time',
   'end_time',
   'time_slot',

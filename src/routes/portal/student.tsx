@@ -686,7 +686,8 @@ export function StudentDashboardPage() {
               {!showFullWeeklyView && (
                 <div className="flex items-center gap-2 overflow-x-auto pt-2 border-t border-border/60 no-scrollbar">
                   {DAYS_OF_WEEK.map((day) => {
-                    const count = classTimetable.filter((e) => e.day_of_week === day).length;
+                    const teachingCount = classTimetable.filter((e) => e.day_of_week === day && !e.is_break).length;
+                    const breakCount = classTimetable.filter((e) => e.day_of_week === day && e.is_break).length;
                     const isToday = getCurrentDayOfWeek() === day;
                     const active = selectedRoutineDay === day;
 
@@ -716,8 +717,19 @@ export function StudentDashboardPage() {
                               : 'bg-muted text-muted-foreground'
                           }`}
                         >
-                          {count} {count === 1 ? 'Period' : 'Periods'}
+                          {teachingCount} {teachingCount === 1 ? 'Period' : 'Periods'}
                         </span>
+                        {breakCount > 0 && (
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                              active
+                                ? 'bg-amber-400/30 text-amber-100'
+                                : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                            }`}
+                          >
+                            🥪 {breakCount}
+                          </span>
+                        )}
                         {isToday && (
                           <span
                             className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded-sm ${
@@ -742,7 +754,9 @@ export function StudentDashboardPage() {
                     Full Weekly Schedule (Monday – Saturday)
                   </h4>
                   <span className="text-xs text-muted-foreground font-mono">
-                    Total: {classTimetable.length} Scheduled Periods
+                    {classTimetable.filter((e) => !e.is_break).length} Teaching Periods
+                    {classTimetable.filter((e) => e.is_break).length > 0 &&
+                      ` + ${classTimetable.filter((e) => e.is_break).length} Breaks`}
                   </span>
                 </div>
 
@@ -751,9 +765,9 @@ export function StudentDashboardPage() {
                     <thead className="bg-muted/50 text-[11px] uppercase text-muted-foreground font-semibold border-b border-border">
                       <tr>
                         <th className="px-5 py-3.5">Day</th>
-                        <th className="px-5 py-3.5">Period</th>
-                        <th className="px-5 py-3.5">Subject</th>
-                        <th className="px-5 py-3.5">Assigned Teacher</th>
+                        <th className="px-5 py-3.5">Slot / Period</th>
+                        <th className="px-5 py-3.5">Subject / Activity</th>
+                        <th className="px-5 py-3.5">Teacher / Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border text-xs">
@@ -765,20 +779,56 @@ export function StudentDashboardPage() {
                         </tr>
                       ) : (
                         classTimetable.map((entry) => (
-                          <tr key={entry.id} className="hover:bg-muted/30 transition-colors">
+                          <tr
+                            key={entry.id}
+                            className={`transition-colors ${
+                              entry.is_break
+                                ? 'bg-amber-500/5 hover:bg-amber-500/10 border-l-4 border-l-amber-500'
+                                : 'hover:bg-muted/30'
+                            }`}
+                          >
                             <td className="px-5 py-3.5 font-bold text-foreground">
-                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-2.5 py-1 text-xs font-bold">
+                              <span
+                                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold ${
+                                  entry.is_break
+                                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                                    : 'bg-primary/10 text-primary'
+                                }`}
+                              >
                                 {entry.day_of_week}
                               </span>
                             </td>
-                            <td className="px-5 py-3.5 font-mono font-bold text-primary">
-                              Period {entry.period_number}
+                            <td className="px-5 py-3.5">
+                              {entry.is_break ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[10px] font-extrabold tracking-wide uppercase">
+                                  🥪 Non-Period Slot
+                                </span>
+                              ) : (
+                                <span className="font-mono font-bold text-primary">
+                                  Period {entry.period_number}
+                                </span>
+                              )}
                             </td>
                             <td className="px-5 py-3.5 font-bold text-foreground">
-                              {entry.subject}
+                              <div className="flex items-center gap-2">
+                                <span>{entry.subject || (entry.is_break ? 'Tiffin Break' : '')}</span>
+                                {entry.timing_slot && (
+                                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-muted text-muted-foreground font-semibold">
+                                    ⏰ {entry.timing_slot}
+                                  </span>
+                                )}
+                              </div>
                             </td>
-                            <td className="px-5 py-3.5 text-muted-foreground font-medium">
-                              {entry.teacher_name}
+                            <td className="px-5 py-3.5">
+                              {entry.is_break ? (
+                                <span className="text-muted-foreground italic text-[11px]">
+                                  Recess Interval • No Teaching
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground font-medium">
+                                  {entry.teacher_name}
+                                </span>
+                              )}
                             </td>
                           </tr>
                         ))
@@ -814,36 +864,84 @@ export function StudentDashboardPage() {
 
                 return (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {dayPeriods.map((period) => (
-                      <div
-                        key={period.id}
-                        className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
-                      >
-                        {/* Top: Period Badge */}
-                        <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
-                          <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
-                            <Clock className="size-3.5" />
-                            Period {period.period_number}
-                          </span>
-                        </div>
+                    {dayPeriods.map((period) => {
+                      if (period.is_break) {
+                        return (
+                          <div
+                            key={period.id}
+                            className="rounded-3xl border border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-card p-5 shadow-soft hover:shadow-md transition-all space-y-3 flex flex-col justify-between"
+                          >
+                            {/* Top: Break Badge */}
+                            <div className="flex items-center justify-between gap-2 border-b border-amber-500/20 pb-3">
+                              <span className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 px-3 py-1 text-xs font-extrabold">
+                                🥪 Tiffin / Recess Break
+                              </span>
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700/90 dark:text-amber-300/90 bg-amber-500/15 px-2 py-0.5 rounded-md">
+                                Non-Period
+                              </span>
+                            </div>
 
-                        {/* Middle: Subject */}
-                        <div className="space-y-1">
-                          <h4 className="text-base font-extrabold text-foreground tracking-tight">
-                            {period.subject}
-                          </h4>
-                        </div>
+                            {/* Middle: Subject & Timing */}
+                            <div className="space-y-1.5">
+                              <h4 className="text-base font-extrabold text-foreground tracking-tight">
+                                {period.subject || 'Tiffin Break (টিফিন বিরতি)'}
+                              </h4>
+                              {period.timing_slot ? (
+                                <p className="text-xs font-mono font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                                  ⏰ {period.timing_slot}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  Lunch & Refreshment Interval
+                                </p>
+                              )}
+                            </div>
 
-                        {/* Bottom: Teacher info */}
-                        <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground font-medium">Teacher:</span>
-                          <span className="font-bold text-foreground flex items-center gap-1.5">
-                            <User className="size-3.5 text-muted-foreground" />
-                            {period.teacher_name}
-                          </span>
+                            {/* Bottom: Note */}
+                            <div className="pt-3 border-t border-amber-500/20 flex items-center justify-between text-xs text-muted-foreground">
+                              <span className="italic">School Recess</span>
+                              <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">Enjoy your break!</span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={period.id}
+                          className="rounded-3xl border border-border bg-card p-5 shadow-soft hover:shadow-md transition-all space-y-4 flex flex-col justify-between"
+                        >
+                          {/* Top: Period Badge */}
+                          <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
+                            <span className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 text-primary px-3 py-1 text-xs font-extrabold">
+                              <Clock className="size-3.5" />
+                              Period {period.period_number}
+                            </span>
+                            {period.timing_slot && (
+                              <span className="text-[11px] font-mono text-muted-foreground font-semibold">
+                                {period.timing_slot}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Middle: Subject */}
+                          <div className="space-y-1">
+                            <h4 className="text-base font-extrabold text-foreground tracking-tight">
+                              {period.subject}
+                            </h4>
+                          </div>
+
+                          {/* Bottom: Teacher info */}
+                          <div className="pt-3 border-t border-border/60 flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground font-medium">Teacher:</span>
+                            <span className="font-bold text-foreground flex items-center gap-1.5">
+                              <User className="size-3.5 text-muted-foreground" />
+                              {period.teacher_name}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })()
