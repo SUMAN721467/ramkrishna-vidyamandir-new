@@ -703,6 +703,19 @@ function AdminDashboardPage() {
 
   useEffect(() => {
     loadData();
+
+    const handleSync = () => {
+      loadData();
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleSync);
+      window.addEventListener('storage', handleSync);
+      return () => {
+        window.removeEventListener('focus', handleSync);
+        window.removeEventListener('storage', handleSync);
+      };
+    }
   }, []);
 
   // Filter attendance records based on filter inputs

@@ -213,9 +213,18 @@ export function StudentDashboardPage() {
       } finally {
         setLoading(false);
       }
-    }
+    };
 
     loadStudentData();
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', loadStudentData);
+      window.addEventListener('storage', loadStudentData);
+      return () => {
+        window.removeEventListener('focus', loadStudentData);
+        window.removeEventListener('storage', loadStudentData);
+      };
+    }
   }, [user, profile]);
 
   // Handle Photo Upload Request

@@ -2133,12 +2133,108 @@ const DAY_ORDER: Record<string, number> = {
   Saturday: 6,
 };
 
+export function normalizeClassTimetableEntry(entry: any): ClassTimetableEntry {
+  if (!entry) return entry;
+
+  let isBreak = Boolean(entry.is_break);
+  let breakType = entry.break_type || (isBreak ? 'tiffin' : undefined);
+  let periodNumber = Number(entry.period_number) || 1;
+  let timeSlot = entry.time_slot || '';
+  const subject = entry.subject || '';
+
+  // 1. Check if break metadata was encoded into time_slot (for backwards-compatibility with unmigrated DBs)
+  // Format: "[BREAK:3.5:tiffin] 1:00 PM - 1:30 PM"
+  if (timeSlot && timeSlot.includes('[BREAK:')) {
+    const match = timeSlot.match(/\[BREAK:([0-9.]+):?([a-z_]*)\]\s*(.*)/i);
+    if (match) {
+      isBreak = true;
+      if (match[1]) periodNumber = parseFloat(match[1]) || periodNumber;
+      if (match[2]) breakType = match[2];
+      timeSlot = match[3] || '';
+    }
+  }
+
+  // 2. Also auto-detect if subject is a break keyword and teacher is NA/empty
+  if (!isBreak) {
+    const sLower = subject.toLowerCase();
+    const isTeacherNA = !entry.teacher_id || entry.teacher_name === 'NA' || !entry.teacher_name;
+    if (
+      isTeacherNA &&
+      (sLower.includes('tiffin') ||
+       sLower.includes('break') ||
+       sLower.includes('recess') ||
+       sLower.includes('lunch') ||
+       sLower.includes('টিফিন') ||
+       sLower.includes('বিরতি'))
+    ) {
+      isBreak = true;
+      breakType = breakType || 'tiffin';
+    }
+  }
+
+  return {
+    ...entry,
+    is_break: isBreak,
+    break_type: breakType,
+    period_number: periodNumber,
+    time_slot: timeSlot,
+    subject: subject,
+    teacher_name: isBreak ? 'NA' : (entry.teacher_name || 'NA'),
+    teacher_id: isBreak ? undefined : entry.teacher_id,
+  };
+}
+
+async function syncEntryToSupabase(entry: ClassTimetableEntry): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const isBreak = Boolean(entry.is_break);
+  const periodNumber = Number(entry.period_number) || 1;
+  const breakType = entry.break_type || (isBreak ? 'tiffin' : undefined);
+  const rawTimeSlot = entry.time_slot || `${entry.start_time || '10:30 AM'} - ${entry.end_time || '11:15 AM'}`;
+
+  try {
+    // 1. Try full payload insert/upsert
+    const sanitized = sanitizeClassTimetablePayload({
+      ...entry,
+      period_number: periodNumber,
+      is_break: isBreak,
+      break_type: breakType,
+      time_slot: rawTimeSlot,
+      teacher_name: isBreak ? 'NA' : (entry.teacher_name || 'NA'),
+      teacher_id: isBreak ? null : (entry.teacher_id || null),
+    });
+
+    const { error } = await supabase.from('class_timetables').upsert([sanitized]);
+    if (!error) return;
+
+    // 2. If full upsert failed (due to missing is_break column or integer period_number constraint), fallback:
+    console.warn('[Portal DB] Full sync to Supabase failed, using compatibility fallback:', error.message);
+    const compatPayload: Record<string, any> = {
+      id: entry.id,
+      class_id: entry.class_id,
+      day_of_week: entry.day_of_week,
+      period_number: Math.round(periodNumber) || 1,
+      start_time: entry.start_time || '10:30 AM',
+      end_time: entry.end_time || '11:15 AM',
+      time_slot: isBreak ? `[BREAK:${periodNumber}:${breakType}] ${rawTimeSlot}`.trim() : rawTimeSlot,
+      subject: entry.subject,
+      teacher_name: isBreak ? 'NA' : (entry.teacher_name || 'NA'),
+      teacher_id: isBreak ? null : (entry.teacher_id || null),
+      room_number: entry.room_number || '',
+    };
+
+    await supabase.from('class_timetables').upsert([compatPayload]);
+  } catch (err) {
+    console.warn('[Portal DB] Error in syncEntryToSupabase:', err);
+  }
+}
+
 export async function fetchClassTimetable(
   classId?: string,
   dayOfWeek?: string
 ): Promise<ClassTimetableEntry[]> {
   const timetableMap = new Map<string, ClassTimetableEntry>();
   let remoteLoaded = false;
+  const remoteIds = new Set<string>();
 
   if (isSupabaseConfigured) {
     try {
@@ -2159,7 +2255,9 @@ export async function fetchClassTimetable(
       if (!error && data && Array.isArray(data)) {
         data.forEach((entry: any) => {
           if (!isDummyTimetableEntry(entry)) {
-            timetableMap.set(entry.id, entry);
+            const normalized = normalizeClassTimetableEntry(entry);
+            timetableMap.set(normalized.id, normalized);
+            remoteIds.add(normalized.id);
           }
         });
         remoteLoaded = true;
@@ -2174,7 +2272,8 @@ export async function fetchClassTimetable(
   // Always merge non-dummy entries from local/store (so offline or locally-created entries are never dropped)
   store.timetables.forEach((e) => {
     if (!isDummyTimetableEntry(e) && !timetableMap.has(e.id)) {
-      timetableMap.set(e.id, e);
+      const normalized = normalizeClassTimetableEntry(e);
+      timetableMap.set(normalized.id, normalized);
     }
   });
 
@@ -2187,12 +2286,25 @@ export async function fetchClassTimetable(
         if (parsed.timetables && Array.isArray(parsed.timetables)) {
           parsed.timetables.forEach((e: any) => {
             if (!isDummyTimetableEntry(e) && !timetableMap.has(e.id)) {
-              timetableMap.set(e.id, e);
+              const normalized = normalizeClassTimetableEntry(e);
+              timetableMap.set(normalized.id, normalized);
             }
           });
         }
       }
     } catch {}
+  }
+
+  // Auto-sync any local-only entries up to Supabase if Supabase is connected
+  if (remoteLoaded && isSupabaseConfigured) {
+    const unsyncedEntries = Array.from(timetableMap.values()).filter(
+      (e) => !remoteIds.has(e.id) && !isDummyTimetableEntry(e)
+    );
+    if (unsyncedEntries.length > 0) {
+      unsyncedEntries.forEach((entry) => {
+        syncEntryToSupabase(entry).catch(() => {});
+      });
+    }
   }
 
   let list = Array.from(timetableMap.values()).filter((e) => !isDummyTimetableEntry(e));
@@ -2227,12 +2339,21 @@ export async function addClassTimetableEntry(
   const now = new Date().toISOString();
   const startTime = entryData.start_time || '10:30 AM';
   const endTime = entryData.end_time || '11:15 AM';
-  const timeSlot = entryData.time_slot || (entryData.start_time && entryData.end_time ? `${entryData.start_time} - ${entryData.end_time}` : `${startTime} - ${endTime}`);
+  const isBreak = Boolean(entryData.is_break);
+  const breakType = isBreak ? (entryData.break_type || 'tiffin') : undefined;
+  const periodNumber = Number(entryData.period_number) || 1;
+  const rawTimeSlot = entryData.time_slot || (entryData.start_time && entryData.end_time ? `${entryData.start_time} - ${entryData.end_time}` : `${startTime} - ${endTime}`);
+
   const newEntry: ClassTimetableEntry = {
     ...entryData,
+    period_number: periodNumber,
+    is_break: isBreak,
+    break_type: breakType,
+    teacher_name: isBreak ? 'NA' : (entryData.teacher_name || 'NA'),
+    teacher_id: isBreak ? undefined : entryData.teacher_id,
     start_time: startTime,
     end_time: endTime,
-    time_slot: timeSlot,
+    time_slot: rawTimeSlot,
     id: `tt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     created_at: now,
     updated_at: now,
@@ -2261,16 +2382,50 @@ export async function addClassTimetableEntry(
 
   if (isSupabaseConfigured) {
     try {
+      // 1. Try full insert
       const sanitized = sanitizeClassTimetablePayload(newEntry);
       const { data, error } = await supabase.from('class_timetables').insert([sanitized]).select().single();
       if (!error && data) {
         const classes = await fetchClasses();
         const foundCls = classes.find((c) => c.id === data.class_id);
-        return { ...data, class_name: foundCls?.name || 'Class' };
+        const normalized = normalizeClassTimetableEntry(data);
+        return { ...normalized, class_name: foundCls?.name || 'Class' };
       }
-      console.warn('[Portal DB] class_timetables table not in Supabase yet, entry preserved locally:', error?.message);
+
+      // 2. Compatibility fallback for unmigrated schema
+      if (error) {
+        console.warn('[Portal DB] Full insert to class_timetables failed, using compatibility fallback:', error.message);
+        const compatPayload: Record<string, any> = {
+          id: newEntry.id,
+          class_id: newEntry.class_id,
+          day_of_week: newEntry.day_of_week,
+          period_number: Math.round(periodNumber) || 1,
+          start_time: newEntry.start_time,
+          end_time: newEntry.end_time,
+          time_slot: isBreak ? `[BREAK:${periodNumber}:${breakType}] ${rawTimeSlot}`.trim() : rawTimeSlot,
+          subject: newEntry.subject,
+          teacher_name: newEntry.teacher_name || 'NA',
+          teacher_id: newEntry.teacher_id || null,
+          room_number: newEntry.room_number || '',
+        };
+
+        const { data: fbData, error: fbError } = await supabase
+          .from('class_timetables')
+          .insert([compatPayload])
+          .select()
+          .single();
+
+        if (!fbError && fbData) {
+          const classes = await fetchClasses();
+          const foundCls = classes.find((c) => c.id === fbData.class_id);
+          const normalized = normalizeClassTimetableEntry(fbData);
+          return { ...normalized, class_name: foundCls?.name || 'Class' };
+        } else if (fbError) {
+          console.error('[Portal DB] Compatibility insert to class_timetables also failed:', fbError.message);
+        }
+      }
     } catch (err: any) {
-      console.warn('[Portal DB] Exception inserting to class_timetables in Supabase, preserved locally:', err);
+      console.warn('[Portal DB] Exception inserting to class_timetables in Supabase:', err);
     }
   }
 
@@ -2282,11 +2437,23 @@ export async function updateClassTimetableEntry(
   updates: Partial<ClassTimetableEntry>
 ): Promise<ClassTimetableEntry> {
   const now = new Date().toISOString();
-  const fullUpdates = {
+  const isBreak = updates.is_break !== undefined ? Boolean(updates.is_break) : undefined;
+  const breakType = isBreak ? (updates.break_type || 'tiffin') : undefined;
+  const periodNumber = updates.period_number !== undefined ? Number(updates.period_number) : undefined;
+  const rawTimeSlot = updates.start_time && updates.end_time ? `${updates.start_time} - ${updates.end_time}` : updates.time_slot;
+
+  const fullUpdates: Partial<ClassTimetableEntry> = {
     ...updates,
-    time_slot: updates.start_time && updates.end_time ? `${updates.start_time} - ${updates.end_time}` : updates.time_slot,
     updated_at: now,
   };
+  if (isBreak !== undefined) fullUpdates.is_break = isBreak;
+  if (breakType !== undefined) fullUpdates.break_type = breakType;
+  if (periodNumber !== undefined) fullUpdates.period_number = periodNumber;
+  if (rawTimeSlot !== undefined) fullUpdates.time_slot = rawTimeSlot;
+  if (isBreak) {
+    fullUpdates.teacher_name = 'NA';
+    fullUpdates.teacher_id = undefined;
+  }
 
   const idx = store.timetables.findIndex((e) => e.id === id);
   if (idx >= 0) {
@@ -2325,7 +2492,48 @@ export async function updateClassTimetableEntry(
       if (!error && data) {
         const classes = await fetchClasses();
         const cls = classes.find((c) => c.id === data.class_id);
-        return { ...data, class_name: cls?.name || 'Class' };
+        const normalized = normalizeClassTimetableEntry(data);
+        return { ...normalized, class_name: cls?.name || 'Class' };
+      }
+
+      if (error) {
+        console.warn('[Portal DB] Full update to class_timetables failed, using compatibility fallback:', error.message);
+        const existing = store.timetables.find((e) => e.id === id) || (fullUpdates as ClassTimetableEntry);
+        const effectiveIsBreak = isBreak !== undefined ? isBreak : Boolean(existing.is_break);
+        const effectivePeriod = periodNumber !== undefined ? periodNumber : (Number(existing.period_number) || 1);
+        const effectiveBreakType = breakType || existing.break_type || 'tiffin';
+        const effectiveTimeSlot = rawTimeSlot || existing.time_slot || '';
+
+        const compatUpdates: Record<string, any> = {};
+        if (fullUpdates.class_id) compatUpdates.class_id = fullUpdates.class_id;
+        if (fullUpdates.day_of_week) compatUpdates.day_of_week = fullUpdates.day_of_week;
+        if (periodNumber !== undefined) compatUpdates.period_number = Math.round(effectivePeriod) || 1;
+        if (fullUpdates.start_time) compatUpdates.start_time = fullUpdates.start_time;
+        if (fullUpdates.end_time) compatUpdates.end_time = fullUpdates.end_time;
+        if (fullUpdates.subject) compatUpdates.subject = fullUpdates.subject;
+        if (fullUpdates.teacher_name !== undefined) compatUpdates.teacher_name = effectiveIsBreak ? 'NA' : fullUpdates.teacher_name;
+        if (fullUpdates.teacher_id !== undefined) compatUpdates.teacher_id = effectiveIsBreak ? null : fullUpdates.teacher_id;
+        if (fullUpdates.room_number !== undefined) compatUpdates.room_number = fullUpdates.room_number;
+
+        if (effectiveIsBreak) {
+          compatUpdates.time_slot = `[BREAK:${effectivePeriod}:${effectiveBreakType}] ${effectiveTimeSlot}`.trim();
+        } else if (rawTimeSlot !== undefined) {
+          compatUpdates.time_slot = rawTimeSlot;
+        }
+
+        const { data: fbData, error: fbError } = await supabase
+          .from('class_timetables')
+          .update(compatUpdates)
+          .eq('id', id)
+          .select()
+          .single();
+
+        if (!fbError && fbData) {
+          const classes = await fetchClasses();
+          const cls = classes.find((c) => c.id === fbData.class_id);
+          const normalized = normalizeClassTimetableEntry(fbData);
+          return { ...normalized, class_name: cls?.name || 'Class' };
+        }
       }
     } catch (e) {
       console.warn('[Portal DB] Exception updating class_timetables in Supabase:', e);
